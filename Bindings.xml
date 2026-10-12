@@ -1,0 +1,8 @@
+<Bindings>
+	<Binding name="RAIDBROWSERPLUS_TOGGLE" header="RAIDBROWSERPLUS">
+		RaidBrowserPlus:Toggle();
+	</Binding>
+	<Binding name="RAIDBROWSERPLUS_NEXT">
+		RaidBrowserPlus:ScanKey();
+	</Binding>
+</Bindings>
