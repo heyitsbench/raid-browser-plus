@@ -1034,22 +1034,29 @@ function RBP:PlayerItemLevel()
     return sum / #INV_SLOTS
 end
 
+-- Your spec and role for whisper templates, judged the same way as listed
+-- players: no spec with no talents spent or a tie between trees. When talents
+-- don't settle the role, fall back to the roles picked for the Raid Browser.
 function RBP:PlayerSpec()
-    local _, classToken = UnitClass("player")
-    local className = UnitClass("player")
-    local best, bestPts, bestName = 0, -1, nil
+    local className, classToken = UnitClass("player")
+    local pts, names = {}, {}
     for tab = 1, 3 do
-        local name, _, pts = GetTalentTabInfo(tab)
-        if (pts or 0) > bestPts then best, bestPts, bestName = tab, pts or 0, name end
+        local name, _, spent = GetTalentTabInfo(tab)
+        names[tab], pts[tab] = name, tonumber(spent) or 0
     end
-    local role
-    local spec = RBP.SPECS[classToken or ""]
-    if spec and best > 0 then role = spec[best][2] end
-    if role == "HYBRID" and GetLFGRoles then
+    local specName, role = self:InferSpec(classToken, { talent1 = pts[1], talent2 = pts[2], talent3 = pts[3] })
+    local spec
+    if specName and specName ~= "Hybrid" then
+        -- the client's own (localized) name for the tab with the most points
+        local best = 1
+        for tab = 2, 3 do if pts[tab] > pts[best] then best = tab end end
+        spec = names[best]
+    end
+    if (role == nil or role == "HYBRID") and GetLFGRoles then
         local _, tank, healer, dps = GetLFGRoles()
         role = tank and "TANK" or (dps and "DAMAGER" or (healer and "HEALER" or nil))
     end
-    return bestName, className, role
+    return spec, className, role
 end
 
 local ROLE_WORD = { TANK = "tank", HEALER = "healer", DAMAGER = "dps" }
@@ -1066,7 +1073,8 @@ function RBP:FormatTemplate(kind, e)
         role = role and ROLE_WORD[role] or "",
     }
     local out = t:gsub("{(%w+)}", function(k) return vals[k] or ("{" .. k .. "}") end)
-    out = out:gsub("%s%s+", " ")
+    -- an empty token can leave doubled or edge spaces
+    out = out:gsub("%s%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
     return out
 end
 
