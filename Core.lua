@@ -581,6 +581,7 @@ function RBP:Snapshot(raidId, isJoinReply)
     end
 
     self:CheckSelfListing(raidId, entries)
+    self:CheckHidden(raidId, entries)
     if #fresh > 0 then self:AlertNew(fresh) end
     self:RequestRefresh()
 end
@@ -613,7 +614,70 @@ function RBP:PassesFilters(e)
     end
     if f.hideIgnored and e.relation == "ignored" then return false end
     if f.search and f.search ~= "" and not e.searchText:find(f.search, 1, true) then return false end
+    if not self.showHidden and self:IsHidden(e) then return false end
     return true
+end
+
+---------------------------------------------------------------------------
+-- Entries you hid (right-click > Hide), this session. A Raid Browser listing
+-- comes back when it leaves the list and is listed again, or its comment
+-- changes; a chat ad when its text changes, or it expires and is posted again.
+---------------------------------------------------------------------------
+RBP.hidden = {}
+
+function RBP:HideKey(e)
+    if e.isChat then return "chat:" .. e.kind .. ":" .. e.name end
+    return (e.isGroup and "g:" or "p:") .. e.name
+end
+
+function RBP:IsHidden(e)
+    return self.hidden[self:HideKey(e)] ~= nil
+end
+
+function RBP:HideEntry(e)
+    local h = { text = e.comment or "", raids = {} }
+    if not e.isChat then
+        -- every raid list it is in now; it comes back once it has left them all
+        for id, c in pairs(self.cache) do
+            for _, x in ipairs(c.entries) do
+                if x.name == e.name and (x.isGroup and true or false) == (e.isGroup and true or false) then h.raids[id] = true end
+            end
+        end
+        if e.raidId then h.raids[e.raidId] = true end
+    end
+    self.hidden[self:HideKey(e)] = h
+    if self.UI and self.UI.selectedKey == self:EntryKey(e) then self.UI.selectedKey = nil end
+    self:RequestRefresh()
+end
+
+function RBP:UnhideEntry(e)
+    self.hidden[self:HideKey(e)] = nil
+    self:RequestRefresh()
+end
+
+function RBP:UnhideAll()
+    wipe(self.hidden)
+    self.showHidden = nil
+    self:RequestRefresh()
+end
+
+-- A new list for a raid: hidden listings that left it, or changed their
+-- comment, come back.
+function RBP:CheckHidden(raidId, entries)
+    if not next(self.hidden) then return end
+    local byKey = {}
+    for _, e in ipairs(entries) do byKey[self:HideKey(e)] = e end
+    for key, h in pairs(self.hidden) do
+        if h.raids and h.raids[raidId] then
+            local e = byKey[key]
+            if not e then
+                h.raids[raidId] = nil
+                if not next(h.raids) then self.hidden[key] = nil end
+            elseif (e.comment or "") ~= h.text then
+                self.hidden[key] = nil
+            end
+        end
+    end
 end
 
 local ROLE_ORDER = { TANK = 1, HEALER = 2, DAMAGER = 3 }
@@ -759,8 +823,10 @@ function RBP:BuildView()
         end
     end
     self.lastList = list
+    self.hiddenCount = 0
     for _, e in ipairs(list) do
         e.relation = self:Relation(e.name)
+        if self:IsHidden(e) then self.hiddenCount = self.hiddenCount + 1 end
         if self:PassesFilters(e) then view[#view + 1] = e end
     end
     self:SortView(view)
@@ -1410,6 +1476,18 @@ function RBP:Slash(msg)
         end
     elseif cmd == "dump" then
         self:Dump(rest)
+    elseif cmd == "hidden" then
+        if rest:lower() == "clear" then
+            local n = 0
+            for _ in pairs(self.hidden) do n = n + 1 end
+            self:UnhideAll()
+            self:Print("%d hidden entr%s shown again.", n, n == 1 and "y" or "ies")
+        else
+            self.showHidden = not self.showHidden or nil
+            self:RequestRefresh()
+            self:Print("hidden entries are %s (/rbp hidden clear shows them all again for good).",
+                self.showHidden and "shown, dimmed" or "hidden")
+        end
     elseif cmd == "options" or cmd == "config" then
         if self.Options then
             self.Options:Open()
@@ -1480,6 +1558,7 @@ function RBP:Slash(msg)
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp alert - toggle new-listing alerts   /rbp sound - alert sound")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp template [group|player <text>] - whisper templates")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp scope level|all   /rbp ignored   /rbp allstats   /rbp gs - your GearScore")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rbp hidden [clear] - show entries you hid (right-click > Hide), or bring them all back")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp chat - raid ads from chat (/rbp chat help for its options)")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp dump [n] - print raw API returns   /rbp reset")
     end

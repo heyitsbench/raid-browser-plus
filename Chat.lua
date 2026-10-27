@@ -550,9 +550,13 @@ function RBP:StoreChatAd(ad, msg, author, source, class, className)
     local now = GetTime()
     local key = ad.kind .. ":" .. author
     local rec = self.chatAds[key]
+    local hidden = self.hidden and self.hidden["chat:" .. key]
     if not rec then
         rec = { firstSeen = now, posts = 0 }
         self.chatAds[key] = rec
+        if hidden then self.hidden["chat:" .. key] = nil end -- it had expired: a new ad
+    elseif hidden and hidden.text ~= msg then
+        self.hidden["chat:" .. key] = nil -- the ad changed
     end
     rec.name, rec.kind, rec.ad, rec.text, rec.seen = author, ad.kind, ad, msg, now
     rec.posts = rec.posts + 1
@@ -572,7 +576,10 @@ function RBP:PruneChatAds()
     local now, maxAge = GetTime(), self:ChatExpire()
     self.chatPruned = now
     for key, rec in pairs(self.chatAds) do
-        if now - rec.seen > maxAge then self.chatAds[key] = nil end
+        if now - rec.seen > maxAge then
+            self.chatAds[key] = nil
+            if self.hidden then self.hidden["chat:" .. key] = nil end
+        end
     end
 end
 
@@ -658,6 +665,7 @@ function RBP:ChatEntries()
     for key, rec in pairs(self.chatAds) do
         if now - rec.seen > maxAge then
             self.chatAds[key] = nil
+            if self.hidden then self.hidden["chat:" .. key] = nil end
         elseif self.db.chat[rec.kind] then
             local e = self:ChatEntry(rec)
             local show = self.mode == "all"

@@ -27,6 +27,11 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 - **Group composition.** Tank/healer/damage counts are inferred from each member's talent split. Defense and bear-form armor settle DK and druid tanks, and any warrior, paladin or DK with +100 defense counts as a tank. Groups also show size (e.g. 11/25) and average item level.
 - **Who's new.** Listings that appear while you browse get a green marker. Turn on *Alert on new* to get a sound and a chat line when a listing that matches your filters shows up. While alerts are on, the addon keeps browsing in the background.
 - **Actions.** Whisper (or double-click a row), Invite, and a ready-to-edit *Ask to join* / *Recruit* whisper from a template (`/rbp template`). `{achi}` in a template links your best achievement for that raid. Right-click a row for a menu with Who and Add Friend.
+- **Hide entries.** Right-click a row and pick *Hide until relisted* for a Raid Browser listing, or *Hide until the ad changes* for a chat ad.
+  - A listing comes back on its own when it leaves the list and is listed again, or when its comment changes. For a player listed in several raids, that means after they've left all of them.
+  - A chat ad comes back when its text changes, or when it expires and is posted again. Reposting the same ad doesn't bring it back.
+  - While anything is hidden, a button next to the search box shows how many. Click it to show them dimmed, where right-click → *Show again* brings one back for good. `/rbp hidden clear` brings them all back.
+  - Hidden entries aren't saved between sessions.
 - **Who you've talked to.** Rows of people you've whispered with get a mark after the name, set by the latest whisper: a yellow ? after yours (waiting for a reply), a green check after theirs. The tooltip and details say when each was. A whisper stops counting after an hour, and the marks aren't saved.
 - **Your lockouts.** Raids you're saved to say *saved* in the raid menu. A listing for one of them shows *Your lockout* with the time until reset in its details.
 - **Your listing.** The footer shows whether you are listed and for which raids. From there you can change your comment, unlist, or open Blizzard's sign-up tab. `/rbp gs` also shows your GearScore and item level there.
@@ -42,6 +47,7 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 | `/rbp template [group\|player <text>]` | Show or set whisper templates. Tokens: `{name} {raid} {spec} {class} {ilvl} {gs} {role} {achi}` |
 | `/rbp scope level\|all` | Which raids the all-raids view covers |
 | `/rbp ignored` | Show or hide players on your ignore list |
+| `/rbp hidden [clear]` | Show or hide the entries you hid, or bring them all back |
 | `/rbp gs` | Show or hide your GearScore and item level in the footer |
 | `/rbp chat [on\|off]` | Show the chat-ad settings, or turn chat ads on or off |
 | `/rbp chat lfm\|lf\|yell\|guild` | Toggle groups' ads, players' ads, yells or guild chat |

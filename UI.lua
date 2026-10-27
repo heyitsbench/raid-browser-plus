@@ -433,6 +433,34 @@ function UI:CreateToolbar()
     search:SetText(RBP.db.filters.search or "")
     ReleaseFocusOnOutsideClick(search)
     self.search = search
+
+    -- shown while something is hidden (right-click > Hide)
+    local hidden = NewButton("RaidBrowserPlusHiddenButton", f, "", 110, 20)
+    hidden:SetPoint("LEFT", search, "RIGHT", 10, 0)
+    hidden:SetScript("OnClick", function()
+        RBP.showHidden = not RBP.showHidden or nil
+        RBP:RequestRefresh()
+    end)
+    SetTip(hidden, "Hidden entries", "Entries you hid with right-click > Hide. A listing comes back on its own when it "
+        .. "is listed again or its comment changes; a chat ad when its text changes, or it expires and is posted again.\n\n"
+        .. "Click to show them (dimmed) or hide them again. Right-click one to show it again for good; /rbp hidden clear "
+        .. "brings them all back.")
+    hidden:Hide()
+    self.hiddenButton = hidden
+end
+
+function UI:UpdateHiddenButton()
+    local b, n = self.hiddenButton, RBP.hiddenCount or 0
+    if not b then return end
+    if RBP.showHidden then
+        b:SetText(n > 0 and format("Hide %d again", n) or "Hide again")
+        b:Show()
+    elseif n > 0 then
+        b:SetText(format("%d hidden", n))
+        b:Show()
+    else
+        b:Hide()
+    end
 end
 
 function UI:CreateFilters()
@@ -1068,6 +1096,7 @@ function UI:Refresh()
     self:UpdateDetails()
     self:UpdateFooter()
     self:UpdateStatus()
+    self:UpdateHiddenButton()
     self:UpdateDropdownText()
     self:SyncFilters()
     self.refresh:SetText(RBP.mode == "all" and "Next raid" or (REFRESH or "Refresh"))
@@ -1150,6 +1179,7 @@ function UI:SetRow(row, e)
     local selected = self.selectedKey == EntryKey(e)
     if selected then row.sel:Show() else row.sel:Hide() end
     if IsNew(e) then row.accent:Show() else row.accent:Hide() end
+    row:SetAlpha((RBP.showHidden and RBP:IsHidden(e)) and 0.45 or 1) -- hidden entries, while shown
 
     if e.isChat then return self:SetChatRow(row, e) end
 
@@ -1327,6 +1357,10 @@ function UI:OpenMenu(e)
         { text = ADD_FRIEND or "Add Friend", notCheckable = true, disabled = e.isSelf or e.relation == "friend",
           func = function() AddFriend(e.name) end },
         { text = WHO or "Who", notCheckable = true, func = function() SendWho('n-"' .. e.name .. '"') end },
+        RBP:IsHidden(e)
+            and { text = "Show again", notCheckable = true, func = function() RBP:UnhideEntry(e) end }
+            or { text = e.isChat and "Hide until the ad changes" or "Hide until relisted", notCheckable = true,
+                 func = function() RBP:HideEntry(e) end },
         { text = CANCEL or "Cancel", notCheckable = true, func = function() CloseDropDownMenus() end },
     }
     EasyMenu(menu, self.menuFrame, "cursor", 0, 0, "MENU")
