@@ -2,7 +2,7 @@
 ## Title: Raid Browser|cff33ff99+|r
 ## Notes: A bigger, sortable, filterable Raid Browser with an all-raids view, specs, item levels, boss progress and group composition.
 ## Author: heyitsbench
-## Version: 1.0.0
+## Version: 1.0.2
 ## SavedVariables: RaidBrowserPlusDB
 ## SavedVariablesPerCharacter: RaidBrowserPlusCharDB
 
