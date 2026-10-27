@@ -10,7 +10,7 @@
 ## Notes-zhCN: 更大的团队浏览器，可排序和过滤：所有副本视图、天赋、装备等级、首领进度和队伍构成。
 ## Notes-zhTW: 更大的團隊瀏覽器，可排序與過濾：所有團隊檢視、天賦、物品等級、首領進度與隊伍組成。
 ## Author: heyitsbench
-## Version: 1.0.2
+## Version: 2.0.0
 ## SavedVariables: RaidBrowserPlusDB
 ## SavedVariablesPerCharacter: RaidBrowserPlusCharDB
 
