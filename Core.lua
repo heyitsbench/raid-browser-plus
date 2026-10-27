@@ -59,6 +59,7 @@ local DEFAULTS = {
     },
     window = { width = 1040, height = 500, detailWidth = 270 },
 }
+RBP.DEFAULTS = DEFAULTS -- for the options panels (Options.lua)
 
 ---------------------------------------------------------------------------
 -- Utilities
@@ -1409,8 +1410,22 @@ function RBP:Slash(msg)
         end
     elseif cmd == "dump" then
         self:Dump(rest)
+    elseif cmd == "options" or cmd == "config" then
+        if self.Options then
+            self.Options:Open()
+        else
+            self:Print("the options panel isn't loaded. Quit and restart the game (a /reload isn't enough after "
+                .. "an update that adds files).")
+        end
     elseif cmd == "chat" then
-        self:ChatCommand(rest)
+        if self.ChatCommand then
+            self:ChatCommand(rest)
+        else
+            -- Chat.lua is a file added in an update: the game reads the list
+            -- of an addon's files only when it starts, not on /reload
+            self:Print("chat ads aren't loaded. Quit and restart the game (a /reload isn't enough after "
+                .. "an update that adds files), and check that Chat.lua is in the addon's folder.")
+        end
     elseif cmd == "gs" or cmd == "gearscore" then
         self.db.showGearScore = not self.db.showGearScore
         self:RequestRefresh()
@@ -1461,6 +1476,7 @@ function RBP:Slash(msg)
     else
         self:Print("commands:")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp - toggle the window   /rbp scan - all raids / load the next raid")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rbp options - the settings in Interface > AddOns > Raid Browser+")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp alert - toggle new-listing alerts   /rbp sound - alert sound")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp template [group|player <text>] - whisper templates")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp scope level|all   /rbp ignored   /rbp allstats   /rbp gs - your GearScore")

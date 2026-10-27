@@ -82,6 +82,7 @@ local function ReleaseFocusOnOutsideClick(box)
         b.mouseWasDown = down
     end)
 end
+UI.ReleaseFocusOnOutsideClick = ReleaseFocusOnOutsideClick -- for the options panels
 
 local function SetTip(frame, title, body)
     frame:SetScript("OnEnter", function(self)
@@ -342,8 +343,13 @@ function UI:Create()
     local close = CreateFrame("Button", "RaidBrowserPlusCloseButton", f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -2, -2)
 
+    local options = NewButton("RaidBrowserPlusOptionsButton", f, "Options", 62, 18)
+    options:SetPoint("RIGHT", close, "LEFT", 2, 0)
+    options:SetScript("OnClick", function() if RBP.Options then RBP.Options:Open() end end)
+    SetTip(options, "Options", "Settings in Interface > AddOns > Raid Browser+ (/rbp options).")
+
     local status = Text(f, "GameFontHighlightSmall")
-    status:SetPoint("RIGHT", close, "LEFT", -4, 0)
+    status:SetPoint("RIGHT", options, "LEFT", -6, 0)
     status:SetJustifyH("RIGHT")
     self.status = status
     local statusHit = CreateFrame("Frame", nil, f)

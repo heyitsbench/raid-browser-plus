@@ -4,7 +4,7 @@ A larger, sortable and filterable replacement for the Browse tab of the Raid Bro
 
 ## Install
 
-Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` and enable it at character select. The folder must keep that name, since it has to match `raid-browser-plus.toc`. Open it with `/rbp`, the **Browser+** button on the Raid Browser's Browse tab, or a key binding (Key Bindings → Raid Browser+). There is a second binding, *Load next raid / refresh*, for stepping through raids.
+Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` and enable it at character select. The folder must keep that name, since it has to match `raid-browser-plus.toc`. Open it with `/rbp`, the **Browser+** button on the Raid Browser's Browse tab, or a key binding (Key Bindings → Raid Browser+). There is a second binding, *Load next raid / refresh*, for stepping through raids. Settings are under Interface → AddOns → Raid Browser+ (or `/rbp options`, or the **Options** button in the window), with pages for whisper templates and chat ads.
 
 ## What it adds over the Blizzard Browse tab
 
@@ -36,6 +36,7 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 | Command | Effect |
 |---|---|
 | `/rbp` | Toggle the window |
+| `/rbp options` | Open the settings in Interface → AddOns |
 | `/rbp scan` | Switch to all raids, or load the next raid if already there |
 | `/rbp alert`, `/rbp sound` | Toggle new-listing alerts and their sound |
 | `/rbp template [group\|player <text>]` | Show or set whisper templates. Tokens: `{name} {raid} {spec} {class} {ilvl} {gs} {role} {achi}` |

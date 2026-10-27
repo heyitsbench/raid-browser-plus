@@ -10,3 +10,4 @@ Data.lua
 Core.lua
 Chat.lua
 UI.lua
+Options.lua
