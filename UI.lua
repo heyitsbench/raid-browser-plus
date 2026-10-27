@@ -25,7 +25,8 @@ local COLUMNS = {
     { key = "class",   title = "Class / Spec", width = 124, sort = "class" },
     { key = "roles",   title = "Roles", width = 52, sort = "role",
       tip = "Players: the roles they listed.\nGroups: |cff4fa3fftanks|r |cff4fff7ahealers|r |cffff6060damage|r, inferred from each member's talents. |cffb0b0b0?|r = can't tell: a hybrid class with no talents spent, or a Blood/Frost death knight or Feral druid without tank stats (members offline since the group was listed send none).\nChat ads: the roles a group asks for (any = none named), or the roles a player offers." },
-    { key = "ilvl",    title = "iLvl", width = 32, sort = "ilvl", justify = "RIGHT" },
+    { key = "ilvl",    title = "iLvl", width = 32, sort = "ilvl", justify = "RIGHT",
+      tip = "Average item level as the Raid Browser sends it (groups: their average).\nChat ads: the GearScore a group asks for or a player states (e.g. 5.8k); they sort below Raid Browser entries, by GearScore." },
     { key = "prog",    title = "Bosses", width = 44, sort = "prog", justify = "CENTER" },
     { key = "raid",    title = "Raid", width = 60, sort = "raid", allOnly = true },
     { key = "zone",    title = ZONE or "Zone", width = 90, sort = "zone", optional = 1 },
@@ -527,7 +528,8 @@ function UI:CreateFilters()
             UI:SyncFilters()
             RBP:RequestRefresh()
         end)
-        SetTip(b, label, "Only show players who listed this role. With no role selected, every player is shown. Groups are not affected.")
+        SetTip(b, label, "Only show players who listed this role, and groups that ask for it (in their comment or chat "
+            .. "ad); groups that don't say which roles they need stay. With no role selected, everyone is shown.")
         self.roleButtons[#self.roleButtons + 1] = b
         prev = b
     end
@@ -1276,7 +1278,8 @@ function UI:SetChatRow(row, e)
         if e.isHealer then row.roleTex.HEALER:SetTexture(texture); row.roleTex.HEALER:Show() end
         if e.isDamage then row.roleTex.DAMAGER:SetTexture(texture); row.roleTex.DAMAGER:Show() end
     end
-    cells.ilvl:SetText(Col(C.dim, "-"))
+    -- no item level in chat: the GearScore asked for (groups) or stated (players)
+    cells.ilvl:SetText(ad.gs and Col(dim and C.dim or RBP.GearScoreColor(ad.gs), GSText(ad.gs)) or Col(C.dim, "-"))
     cells.prog:SetText(ad.progress and Col(C.warn, ad.progress) or Col(C.dim, "-"))
     cells.raid:SetText(Col("d0d0d0", e.raidShort or ""))
     cells.zone:SetText(Col(C.dim, e.area or ""))
@@ -1310,6 +1313,13 @@ function UI:ShowEntryTooltip(owner, e)
     if e.isGroup then
         GameTooltip:AddLine(format("Group %d/%d  -  leader: %s", e.size or 1, e.maxPlayers or 0, SpecText(e)), 1, 0.82, 0)
         GameTooltip:AddLine(CompText(e.comp, true))
+        local asks = e.asks
+        if asks and (not asks.anyRole or asks.gs) then
+            local t = {}
+            if not asks.anyRole then t[#t + 1] = AdRolesText(asks) end
+            if asks.gs then t[#t + 1] = GSText(asks.gs) .. "+ GearScore" end
+            GameTooltip:AddLine("Asks for: " .. table.concat(t, ", "), 1, 1, 1)
+        end
         if e.ilvl then GameTooltip:AddLine("Average item level " .. FmtIlvl(e.ilvl), 1, 1, 1) end
     else
         GameTooltip:AddLine(format("Level %d %s%s", e.level, SpecText(e), e.talentString and ("  (" .. e.talentString .. ")") or ""), 1, 1, 1)
@@ -1544,6 +1554,9 @@ function UI:DetailBlocks(e)
     if e.isGroup then
         row("Members", format("%d/%d", e.size or 1, e.maxPlayers or 0))
         row("Composition", CompText(e.comp, true))
+        local asks = e.asks
+        if asks and not asks.anyRole then row("Asks for", AdRolesText(asks)) end
+        if asks and asks.gs then row("GearScore asked", GSText(asks.gs) .. "+") end
         if e.ilvl then row("Average item level", Col(RBP.ItemLevelColor(e.ilvl), FmtIlvl(e.ilvl))) end
     else
         local roles = {}

@@ -313,8 +313,8 @@ end
 ---------------------------------------------------------------------------
 -- Achievements for {achi} in whisper templates, best first. Each tier holds
 -- the 10- and 25-player achievement and their English names, used to check
--- the ids on English clients. Ids as the RaidBrowser addon for 3.3.5 uses
--- them (MIT).
+-- the ids on English clients. Ids and names checked against the AzerothCore
+-- WotLK database (wowgaming.altervista.org/aowow).
 ---------------------------------------------------------------------------
 local function Tier(id10, id25, name10, name25)
     return { [10] = id10, [25] = id25,
@@ -336,6 +336,9 @@ RBP.RAID_ACHIEVEMENTS = {
         Tier(4531, 4604, "Storming the Citadel (%d player)"),
     },
     ToC = {
+        Tier(3810, 3819, "A Tribute to Insanity (%d player)"),
+        Tier(3809, 3818, "A Tribute to Mad Skill (%d player)"),
+        Tier(3808, 3817, "A Tribute to Skill (%d player)"),
         Tier(3918, 3812, "Call of the Grand Crusade (%d player)"),
         Tier(3917, 3916, "Call of the Crusade (%d player)"),
     },
@@ -343,9 +346,22 @@ RBP.RAID_ACHIEVEMENTS = {
         Tier(4818, 4816, "Heroic: The Twilight Destroyer (%d player)"),
         Tier(4817, 4815, "The Twilight Destroyer (%d player)"),
     },
-    Ulduar = { Tier(2886, 2887, "The Siege of Ulduar (%d player)") },
+    Ulduar = {
+        Tier(3159, 3164, "Alone in the Darkness (%d player)"),     -- Yogg-Saron with no Keepers
+        Tier(3158, 3163, "One Light in the Darkness (%d player)"), -- with one
+        Tier(3036, 3037, "Observed (%d player)"),                  -- Algalon
+        Tier(2894, 2895, "The Secrets of Ulduar (%d player)"),     -- every boss
+        Tier(2892, 2893, "The Descent into Madness (%d player)"),  -- Vezax and Yogg-Saron
+        Tier(2890, 2891, "The Keepers of Ulduar (%d player)"),
+        Tier(2888, 2889, "The Antechamber of Ulduar (%d player)"),
+        Tier(2886, 2887, "The Siege of Ulduar (%d player)"),
+    },
     Naxx = { Tier(576, 577, "The Fall of Naxxramas (%d player)") },
-    OS = { Tier(1876, 625, "Besting the Black Dragonflight (%d player)") },
+    OS = {
+        Tier(2051, 2054, "The Twilight Zone (%d player)"), -- three drakes up
+        Tier(1876, 625, "Besting the Black Dragonflight (%d player)"),
+    },
+    EoE = { Tier(622, 623, "The Spellweaver's Downfall (%d player)") },
     Ony = { Tier(4396, 4397, "Onyxia's Lair (%d player)") },
 }
 RBP.RAID_ACHIEVEMENTS.ToGC = RBP.RAID_ACHIEVEMENTS.ToC

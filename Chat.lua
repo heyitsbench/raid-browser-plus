@@ -274,8 +274,10 @@ end
 --                ad.achievement, ad.achievementLinked, ad.discord, ad.gdkp
 -- Returns nil for anything that isn't a raid ad: no raid named, sales, guild
 -- recruitment, questions, or no sign of either ad type.
+-- groupComment: msg is a Raid Browser group's comment ("need 2 heals 5.8k"),
+-- which is a group's ad by definition and needn't name the raid.
 ---------------------------------------------------------------------------
-function RBP.ParseAd(msg)
+function RBP.ParseAd(msg, groupComment)
     -- Links are left out of the words: an item ("[Bold Cardinal Ruby]") is not
     -- a raid, and an achievement linked as proof only fills in what the ad
     -- leaves out.
@@ -361,16 +363,20 @@ function RBP.ParseAd(msg)
             if #r.sizes > 0 then r.code = "ToGC" else table.remove(raids, idx) end
         end
     end
-    if #raids == 0 then return nil end
+    if #raids == 0 and not groupComment then return nil end
 
     -- roles, with counts written before them ("2 heals", "1xheal", "2x rdps");
     -- a raid size isn't a count ("ICC 10 tank")
     local roles, sizedRole = {}, false
     for idx, w in ipairs(t) do
         local role = ROLE_OF[w] or (w:sub(1, 1) == "x" and ROLE_OF[w:sub(2)])
+        local before = t[idx - 1]
+        if before == "more" or before == "few" then before = t[idx - 2] end
+        if before == "no" or before == "not" or before == "without" then role = nil end -- "need dps, no tanks"
         if role then
             local p = idx - 1
             if t[p] == "x" then p = idx - 2 end
+            if t[p] == "more" then p = p - 1 end -- "3 more heals"
             local n = tonumber(t[p] or "")
             if n and sizeAt[p] then n, sizedRole = nil, true end
             if n and n >= 1 and n <= 20 then
@@ -416,7 +422,7 @@ function RBP.ParseAd(msg)
     -- or "looking for a raid" (a player), "LF <role>" (a group). Then weaker
     -- signs of a group: role counts, "need all", asking for whispers or
     -- offering invites, a fill count, reserved items.
-    local kind
+    local kind = groupComment and "lfm" or nil
     if has.lfm then kind = "lfm" end
     for _, w in ipairs(words) do
         if w:match("^lf%d+m?$") then kind = "lfm" end
@@ -551,6 +557,7 @@ function RBP:StoreChatAd(ad, msg, author, source, class, className)
     local key = ad.kind .. ":" .. author
     local rec = self.chatAds[key]
     local hidden = self.hidden and self.hidden["chat:" .. key]
+    local isNew = not rec
     if not rec then
         rec = { firstSeen = now, posts = 0 }
         self.chatAds[key] = rec
@@ -565,7 +572,35 @@ function RBP:StoreChatAd(ad, msg, author, source, class, className)
     rec.entry = nil -- rebuilt on the next refresh
     self.chatDirty = true
     if now - (self.chatPruned or 0) > 30 then self:PruneChatAds() end
+    if isNew and source ~= "test" then self:AlertChatAd(rec) end
     return rec
+end
+
+-- Whether a chat ad would be in the list now (filters, the raid shown).
+function RBP:ChatAdShown(e)
+    if not (self.db.chat.enabled and self.db.chat[e.kind] and self.db.filters.chat) then return false end
+    if self.mode ~= "all" then
+        local forShown = false
+        for _, id in ipairs(e.raidIds) do if id == self.currentRaid then forShown = true end end
+        if not forShown then return false end
+    end
+    e.relation = self:Relation(e.name)
+    return self:PassesFilters(e)
+end
+
+-- "Alert on new" for chat ads too: a new ad (not a repost) that would be in
+-- the list. The sound plays at most every 10 seconds on a busy channel.
+function RBP:AlertChatAd(rec)
+    if not (self.db.alert and self.db.chat.alert) then return end
+    local e = self:ChatEntry(rec)
+    if e.isSelf or not self:ChatAdShown(e) then return end
+    local now = GetTime()
+    if self.db.alertSound and now - (self.chatAlertSound or -100) >= 10 then
+        self.chatAlertSound = now
+        PlaySound("ReadyCheck")
+    end
+    local cc = self:ClassColor(e.class)
+    self:Print("new in chat: |cff%s|Hplayer:%s|h[%s]|h|r - %s", cc, e.name, e.name, self:ChatAdSummary(e.ad))
 end
 
 function RBP:ChatExpire()
@@ -610,7 +645,7 @@ function RBP:ChatEntry(rec)
         isChat = true, kind = rec.kind, isGroup = rec.kind == "lfm", ad = ad,
         name = rec.name, class = rec.class, className = rec.className or "",
         level = 0, comment = rec.text, area = rec.source, gs = ad.gs,
-        firstSeen = rec.firstSeen, seen = rec.seen, posts = rec.posts, initial = true,
+        firstSeen = rec.firstSeen, seen = rec.seen, posts = rec.posts,
         isSelf = rec.name == self.playerName, raidIds = {}, raidLabels = {},
     }
     local idSet, firstIds = {}, nil
@@ -668,6 +703,8 @@ function RBP:ChatEntries()
             if self.hidden then self.hidden["chat:" .. key] = nil end
         elseif self.db.chat[rec.kind] then
             local e = self:ChatEntry(rec)
+            -- "new" (green marker) when first posted since the window opened
+            e.initial = not (self.windowShownAt and rec.firstSeen > self.windowShownAt)
             local show = self.mode == "all"
             if not show then
                 for _, id in ipairs(e.raidIds) do if id == self.currentRaid then show = true end end
@@ -730,8 +767,8 @@ function RBP:ChatStatus()
     local n = 0
     for _ in pairs(self.chatAds) do n = n + 1 end
     self:Print("chat ads %s: %s; yells %s; guild %s; groups recruiting (lfm) %s; players looking (lf) %s; "
-        .. "kept %d min after the last post; %d ads now.", OnOff(c.enabled), channels, OnOff(c.yell), OnOff(c.guild),
-        OnOff(c.lfm), OnOff(c.lf), math.max(1, tonumber(c.expire) or 5), n)
+        .. "kept %d min after the last post; alerts %s (with Alert on new); %d ads now.", OnOff(c.enabled), channels,
+        OnOff(c.yell), OnOff(c.guild), OnOff(c.lfm), OnOff(c.lf), math.max(1, tonumber(c.expire) or 5), OnOff(c.alert), n)
 end
 
 function RBP:ChatCommand(rest)
@@ -740,7 +777,7 @@ function RBP:ChatCommand(rest)
     sub, arg = RBP.Lower(sub or ""), RBP.Lower(arg or "")
     if sub == "on" or sub == "off" then
         c.enabled = (sub == "on")
-    elseif sub == "lfm" or sub == "lf" or sub == "yell" or sub == "guild" then
+    elseif sub == "lfm" or sub == "lf" or sub == "yell" or sub == "guild" or sub == "alert" then
         c[sub] = not c[sub]
     elseif sub == "channels" and (arg == "all" or arg == "named") then
         if c.channels ~= arg and next(c.list) then
@@ -780,7 +817,7 @@ function RBP:ChatCommand(rest)
         self:RequestRefresh()
         return
     elseif sub ~= "" then
-        self:Print("chat commands: /rbp chat [on|off|lfm|lf|yell|guild], /rbp chat channels all|named, "
+        self:Print("chat commands: /rbp chat [on|off|lfm|lf|yell|guild|alert], /rbp chat channels all|named, "
             .. "/rbp chat channel <name> (leave out a channel, or with 'named' read it), /rbp chat expire <minutes>, "
             .. "/rbp chat test <message> (shows how a message is read and lists it as your ad)")
         return

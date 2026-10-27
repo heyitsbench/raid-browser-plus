@@ -321,9 +321,14 @@ local function BuildChat()
     local lf = Check(p, "Players looking (LF)", "Ads from players looking for a raid; listed as players.\n\n/rbp chat lf",
         function() return c().lf end, function(v) c().lf = v; Changed(true) end)
     lf:SetPoint("LEFT", lfm, "LEFT", 180, 0)
+    local alert = Check(p, "Alert on new ads too", "While Alert on new is on (main page or the window), a new ad that "
+        .. "passes your filters plays the alert sound (at most every 10 seconds) and prints a line. Reposts don't."
+        .. "\n\n/rbp chat alert",
+        function() return c().alert end, function(v) c().alert = v end)
+    alert:SetPoint("TOPLEFT", lfm, "BOTTOMLEFT", 0, 0)
 
     local h1 = Header(p, "Where to read them")
-    h1:SetPoint("TOPLEFT", lfm, "BOTTOMLEFT", -14, -8)
+    h1:SetPoint("TOPLEFT", alert, "BOTTOMLEFT", -14, -6)
     local all = Radio(p, "Every public channel, except the ones listed",
         "/rbp chat channels all", "all", function() return c().channels end, function(v) c().channels = v; Changed(true) end)
     all:SetPoint("TOPLEFT", h1, "BOTTOMLEFT", 4, -6)
@@ -382,7 +387,7 @@ local function BuildChat()
 
     function p:UpdateUsable()
         local on = c().enabled
-        for _, ctl in ipairs({ lfm, lf, all, named, list, yell, guild, expire }) do SetUsable(ctl, on) end
+        for _, ctl in ipairs({ lfm, lf, alert, all, named, list, yell, guild, expire }) do SetUsable(ctl, on) end
         listLabel:SetText(c().channels == "named" and "Channels to read:" or "Channels to leave out:")
         listLabel:SetAlpha(on and 1 or 0.5)
     end

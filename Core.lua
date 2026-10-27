@@ -45,6 +45,7 @@ local DEFAULTS = {
         yell = true,
         guild = false,
         expire = 5,        -- minutes an ad stays after its last post
+        alert = true,      -- new ads alert too, while "Alert on new" is on
     },
     sort = { key = "ilvl", desc = true },
     alert = false,
@@ -460,6 +461,12 @@ function RBP:Derive(e)
     e.listed = not e.isGroup
 
     deriveMember(self, e)
+    -- what a group's comment asks for ("need 2 heals 5.8k"); nil when it doesn't say
+    e.asks = nil
+    if e.isGroup and RBP.ParseAd and e.comment and e.comment ~= "" then
+        local ad = RBP.ParseAd(e.comment, true)
+        if ad and (not ad.anyRole or ad.gs) then e.asks = ad end
+    end
 
     local parts = { e.name, e.className, e.specName or "", e.comment or "", e.area or "", e.raidName }
 
@@ -589,10 +596,24 @@ end
 ---------------------------------------------------------------------------
 -- Filters, sorting and the visible list
 ---------------------------------------------------------------------------
+-- The roles a group asks for: a chat ad's, or what a Raid Browser group's
+-- comment (or its ad in chat) says. Nil when it doesn't say.
+function RBP.AskedRoles(e)
+    local ad = e.isChat and e.ad or e.asks
+    if (not ad or ad.anyRole) and e.chatAd then ad = e.chatAd.ad end
+    if not ad or ad.anyRole then return nil end
+    return ad.roles
+end
+
 function RBP:PassesFilters(e)
     local f = self.db.filters
     if e.isGroup then
         if not f.groups then return false end
+        -- the role buttons keep groups that ask for one of those roles, or don't say
+        if f.tank or f.healer or f.dps then
+            local r = RBP.AskedRoles(e)
+            if r and not ((f.tank and r.TANK) or (f.healer and r.HEALER) or (f.dps and r.DAMAGER)) then return false end
+        end
     else
         if not f.solo then return false end
         if f.tank or f.healer or f.dps then
@@ -689,7 +710,8 @@ RBP.SORTERS = {
         if e.isGroup then return 9 end
         return ROLE_ORDER[e.role or ""] or (e.isTank and 1.5 or (e.isHealer and 2.5 or 4))
     end,
-    ilvl = function(e) return e.ilvl or 0 end,
+    -- chat ads have a GearScore instead: below every item level, in GearScore order
+    ilvl = function(e) return e.ilvl or (e.isChat and e.gs and e.gs / 10000) or 0 end,
     prog = function(e) return (e.encDone or 0) * 100 + (e.encTotal or 0) end,
     raid = function(e) return format("%s%03d", e.raidName or "", e.maxPlayers or 0) end,
     zone = function(e) return RBP.Lower(e.area) end,
@@ -993,6 +1015,7 @@ function RBP:OnWindowShown()
     -- meantime, start over so everyone listed during the gap isn't flagged.
     if not (SearchLFGGetJoinedID and SearchLFGGetJoinedID()) then wipe(self.seen) end
     self:EnsureRaids()
+    self.windowShownAt = GetTime() -- chat ads posted from now on count as new
     self:RequestLockouts() -- a boss killed since login changes them
     if self.mode == "all" then
         self:ScanStep()
@@ -1353,8 +1376,11 @@ end
 RBP.contacts = {}
 RBP.CONTACT_SHOW = 3600 -- marks go after an hour without whispers
 
+-- Keyed by lower-case name: the name a whisper comes back with may be
+-- written the way you typed it ("/w bob").
 function RBP:OnWhisper(event, name)
     if not name or name == "" then return end
+    name = RBP.Lower(name)
     local c = self.contacts[name]
     if not c then c = {}; self.contacts[name] = c end
     if event == "CHAT_MSG_WHISPER_INFORM" then c.sent = GetTime() else c.received = GetTime() end
@@ -1364,7 +1390,7 @@ end
 -- { sent = time?, received = time? }, each only while under an hour old;
 -- nil when neither is
 function RBP:Contact(name)
-    local c = name and self.contacts[name]
+    local c = name and self.contacts[RBP.Lower(name)]
     if not c then return nil end
     local now = GetTime()
     local sent = c.sent and now - c.sent <= RBP.CONTACT_SHOW and c.sent or nil
