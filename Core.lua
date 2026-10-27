@@ -4,9 +4,10 @@ local RBP = RaidBrowserPlus
 
 local ADDON_NAME = "raid-browser-plus" -- folder and .toc name
 local NO_RESPONSE_TIMEOUT = 5 -- no UPDATE_LFG_LIST after SearchLFGJoin -> warn
-local STALE_UPDATE_AGE = 25   -- the server normally updates a listed raid every few seconds
+local STALE_UPDATE_AGE = 25   -- silence that counts as stalled, once the realm is seen sending unchanged updates
 local LEAVE_DELAY = 40        -- same grace period as Blizzard's LFRParentFrame
 local FRESH_AGE = 600         -- lists older than this drop out of the all-raids view
+local SCAN_WAIT = 1.5         -- how long Next raid waits for an unanswered request
 local NEW_SECONDS = 300       -- how long a listing first seen while browsing counts as new
 RBP.FRESH_AGE, RBP.NEW_SECONDS = FRESH_AGE, NEW_SECONDS
 
@@ -22,6 +23,7 @@ RBP.raidOrder = {}
 RBP.headers = {}
 RBP.headerById = {}
 RBP.cache = {}            -- raidId -> { time, entries, total }
+RBP.requestedAt = {}      -- raidId -> GetTime() of the last list request
 RBP.seen = {}             -- raidId -> name -> { t, initial }
 RBP.view = {}
 RBP.mode = "single"
@@ -431,6 +433,7 @@ function RBP:Derive(e)
     local parts = { e.name, e.className, e.specName or "", e.comment or "", e.area or "", e.raidName }
 
     if e.isGroup then
+        e.isRosterLeader = true -- the group entry doubles as the leader's roster row
         local roster = { e }
         local names = { [e.name] = true }
         for _, m in ipairs(e.members or {}) do
@@ -456,7 +459,7 @@ function RBP:Derive(e)
         e.ilvl = ilvlN > 0 and ilvlSum / ilvlN or nil
     end
 
-    e.searchText = table.concat(parts, "\n"):lower()
+    e.searchText = RBP.Lower(table.concat(parts, "\n"))
 end
 
 ---------------------------------------------------------------------------
@@ -584,9 +587,9 @@ end
 
 local ROLE_ORDER = { TANK = 1, HEALER = 2, DAMAGER = 3 }
 RBP.SORTERS = {
-    name = function(e) return e.name:lower() end,
+    name = function(e) return RBP.Lower(e.name) end,
     level = function(e) return e.level or 0 end,
-    class = function(e) return (e.isGroup and "~" or "") .. (e.className or ""):lower() .. (e.specName or "") end,
+    class = function(e) return (e.isGroup and "~" or "") .. RBP.Lower(e.className) .. (e.specName or "") end,
     role = function(e)
         if e.isGroup then return 9 end
         return ROLE_ORDER[e.role or ""] or (e.isTank and 1.5 or (e.isHealer and 2.5 or 4))
@@ -594,8 +597,8 @@ RBP.SORTERS = {
     ilvl = function(e) return e.ilvl or 0 end,
     prog = function(e) return (e.encDone or 0) * 100 + (e.encTotal or 0) end,
     raid = function(e) return format("%s%03d", e.raidName or "", e.maxPlayers or 0) end,
-    zone = function(e) return (e.area or ""):lower() end,
-    comment = function(e) return (e.comment or ""):lower() end,
+    zone = function(e) return RBP.Lower(e.area) end,
+    comment = function(e) return RBP.Lower(e.comment) end,
 }
 
 function RBP:SortView(view)
@@ -731,6 +734,11 @@ function RBP:JoinRaid(id)
     local raid = self:GetRaid(id)
     if not raid then return end
     self.pendingJoin = id
+    self.requestedAt[id] = GetTime()
+    if self.noResponse then
+        self.noResponse = nil -- the new request gets its own watchdog
+        self:RequestRefresh()
+    end
     self:SendJoin(raid)
     self:CancelTimer(self.watchdog)
     self.watchdog = self:After(NO_RESPONSE_TIMEOUT, function()
@@ -789,7 +797,9 @@ function RBP:OnListUpdate()
     if not joined then return end
 
     local isJoinReply = (self.pendingJoin == joined)
-    if isJoinReply then self:ClearPendingJoin() end
+    -- A list for another raid means that raid was asked for after ours (e.g. in
+    -- Blizzard's Browse dropdown), so ours won't be answered: stop waiting for it.
+    if self.pendingJoin then self:ClearPendingJoin() end
     if not self:IsWatching() then return end
     if self.mode == "single" and joined ~= self.currentRaid then
         -- Follow a raid picked in Blizzard's Browse dropdown.
@@ -804,11 +814,14 @@ end
 -- scope that was never loaded or was loaded longest ago. The raid loaded
 -- last keeps receiving the server's live updates.
 ---------------------------------------------------------------------------
+-- A raid that was asked for but never answered counts as loaded at the time
+-- of the request, so it goes to the back of the queue instead of being picked
+-- again on every press.
 function RBP:NextScanRaid()
     local best, bestTime
     for _, id in ipairs(self:GetScanList()) do
         local c = self.cache[id]
-        local t = c and c.time or -1
+        local t = math.max(c and c.time or -1, self.requestedAt[id] or -1)
         if not best or t < bestTime then best, bestTime = id, t end
     end
     return best
@@ -816,8 +829,21 @@ end
 
 function RBP:ScanStep()
     if not self:EnsureRaids() then return end
+    -- The client keeps only the list it asked for last, so asking for another
+    -- raid before the current request is answered would throw that answer away.
+    local p = self.pendingJoin
+    if p and GetTime() - (self.requestedAt[p] or 0) < SCAN_WAIT then return end
     local id = self:NextScanRaid()
     if id then self:JoinRaid(id) end
+end
+
+-- Retry on the no-reply banner: in all-raids mode ask the raid that didn't
+-- answer again (Next raid would move on); in single-raid mode refresh the raid shown.
+function RBP:RetryNoResponse()
+    local nr = self.noResponse
+    self.noResponse = nil
+    if self.mode == "all" and nr and nr.raidId then self:JoinRaid(nr.raidId) else self:Refresh() end
+    self:RequestRefresh()
 end
 
 -- How many raids in scope have a list from the last 10 minutes.
@@ -1132,7 +1158,7 @@ end
 function RBP:OpenTemplateWhisper(e)
     local kind = e.isGroup and "group" or "player"
     local msg = self:FormatTemplate(kind, e)
-    ChatFrame_OpenChat("/w " .. e.name .. " " .. msg)
+    ChatFrame_OpenChat((SLASH_WHISPER1 or "/w") .. " " .. e.name .. " " .. msg)
 end
 
 ---------------------------------------------------------------------------
@@ -1211,7 +1237,10 @@ function RBP:Slash(msg)
         self:Print("details show %s.", self.db.showAllStats and "every stat" or "only the stats relevant to class and spec")
     elseif cmd == "scope" then
         local m = rest:lower()
-        if m == "all" or m == "level" then self.db.scanScope = m end
+        if m == "all" or m == "level" then
+            self.db.scanScope = m
+            self:RequestRefresh()
+        end
         self:Print("scan scope: %s (level = raids you can enter at your level, all = every raid).", self.db.scanScope)
     elseif cmd == "alert" then
         self:SetAlert(not self.db.alert)

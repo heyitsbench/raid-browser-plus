@@ -71,6 +71,18 @@ local function NewButton(name, parent, text, width, height)
     return b
 end
 
+-- Edit boxes keep keyboard focus until something clears it, and a click on a
+-- button or in the 3D world doesn't. After typing a search, W/A/S/D would keep
+-- going into the box. 3.3.5 has no global mouse event, so each box watches for
+-- a mouse press outside itself while it has focus.
+local function ReleaseFocusOnOutsideClick(box)
+    box:SetScript("OnUpdate", function(b)
+        local down = IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")
+        if down and not b.mouseWasDown and b:HasFocus() and not MouseIsOver(b) then b:ClearFocus() end
+        b.mouseWasDown = down
+    end)
+end
+
 local function SetTip(frame, title, body)
     frame:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -240,6 +252,9 @@ function UI:Create()
     end)
     f:SetScript("OnHide", function()
         PlaySound("igCharacterInfoClose")
+        local open = UIDROPDOWNMENU_OPEN_MENU
+        if open and (open == UI.menuFrame or open == UI.dropdown) then CloseDropDownMenus() end -- ours only
+        if UI.detail and UI.detail.split.dragging then UI.detail.split:StopDrag() end
         RBP:OnWindowHidden()
     end)
     f:SetScript("OnSizeChanged", function() if f:IsShown() then UI:Layout(); RBP:RequestRefresh() end end)
@@ -295,7 +310,11 @@ function UI:CreateToolbar()
 
     local refresh = NewButton("RaidBrowserPlusRefreshButton", f, REFRESH or "Refresh", 76, 22)
     refresh:SetPoint("LEFT", dd, "RIGHT", -10, 2)
-    refresh:SetScript("OnClick", function() PlaySound("UChatScrollButton"); RBP:Refresh() end)
+    refresh:SetScript("OnClick", function(btn)
+        PlaySound("UChatScrollButton")
+        RBP:Refresh()
+        if GameTooltip:IsOwned(btn) then btn:GetScript("OnEnter")(btn) end -- now names the next raid
+    end)
     SetTip(refresh, function() return refresh:GetText() end, function()
         if RBP.mode == "all" then
             local id = RBP:NextScanRaid()
@@ -305,7 +324,7 @@ function UI:CreateToolbar()
                 .. "to step through them quickly. /rbp scope all includes older raids.",
                 id and RBP:RaidLabel(id) or "the next raid", loaded, total)
         end
-        return "Ask the server for the full list again. Changes also arrive on their own every few seconds."
+        return "Ask the server for the full list again. Changes also arrive on their own, within a few seconds."
     end)
     self.refresh = refresh
 
@@ -323,13 +342,14 @@ function UI:CreateToolbar()
     SetTip(search, "Search", "Matches names, class, spec, comment, zone and raid, and the names of group members.")
     search:SetScript("OnTextChanged", function(box)
         local t = box:GetText() or ""
-        RBP.db.filters.search = strtrim(t):lower()
+        RBP.db.filters.search = RBP.Lower(strtrim(t))
         if t == "" then hint:Show() else hint:Hide() end
         RBP:RequestRefresh()
     end)
     search:SetScript("OnEscapePressed", function(box) box:SetText(""); box:ClearFocus() end)
     search:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
     search:SetText(RBP.db.filters.search or "")
+    ReleaseFocusOnOutsideClick(search)
     self.search = search
 end
 
@@ -416,6 +436,7 @@ function UI:CreateFilters()
     ilvl:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
     ilvl:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
     SetTip(ilvl, "Minimum item level", "Hides players (and groups by their average) below this item level. Entries without item level data are kept.")
+    ReleaseFocusOnOutsideClick(ilvl)
     self.minIlvl = ilvl
 
     local _, freshText = Check("RaidBrowserPlusFreshOnly", "No kills",
@@ -627,7 +648,8 @@ function UI:CreateRow(i)
         if button == "RightButton" then UI:OpenMenu(r.entry) end
         RBP:RequestRefresh()
     end)
-    row:SetScript("OnDoubleClick", function(r)
+    row:SetScript("OnDoubleClick", function(r, button)
+        if button ~= "LeftButton" then return end -- rows also take right-clicks (menu)
         if r.entry and not r.entry.isSelf then ChatFrame_SendTell(r.entry.name) end
     end)
     row:SetScript("OnEnter", function(r) if r.entry then UI:ShowEntryTooltip(r, r.entry) end end)
@@ -653,7 +675,7 @@ function UI:CreateDetails()
     d.sub:SetPoint("RIGHT", d, "RIGHT", -12, 0)
 
     local scroll = CreateFrame("ScrollFrame", "RaidBrowserPlusDetailScroll", d, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", d, "TOPLEFT", 10, -52)
+    scroll:SetPoint("TOPLEFT", d.sub, "BOTTOMLEFT", -2, -8) -- a wrapped subtitle pushes the content down
     scroll:SetPoint("BOTTOMRIGHT", d, "BOTTOMRIGHT", -30, 36)
     local child = CreateFrame("Frame", nil, scroll)
     child:SetWidth(DETAIL_W - 44)
@@ -714,14 +736,16 @@ function UI:CreateDetails()
         if not s.dragging then s.grip:SetAlpha(0.3) end
         GameTooltip:Hide()
     end)
+    split.StopDrag = stopDrag
     split:SetScript("OnMouseDown", function(s, button)
         if button ~= "LeftButton" then return end
         GameTooltip:Hide()
         s.dragging, s.startX, s.startW = true, cursorX(), UI.detailW
         s:SetScript("OnUpdate", function(handle)
+            -- released outside the handle: stop before applying a stale position
+            if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then return stopDrag(handle) end
             -- the details pane is anchored on the right, so dragging left widens it
             UI:SetDetailWidth(handle.startW + (handle.startX - cursorX()))
-            if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then stopDrag(handle) end
         end)
     end)
     split:SetScript("OnMouseUp", function(s) if s.dragging then stopDrag(s) end end)
@@ -775,10 +799,12 @@ function UI:CreateFooter()
     foot.comment:SetHeight(18)
     foot.comment:SetAutoFocus(false)
     foot.comment:SetMaxLetters(64)
+    ReleaseFocusOnOutsideClick(foot.comment)
     foot.comment:SetPoint("RIGHT", foot.set, "LEFT", -8, 0)
     local function apply()
         local text = foot.comment:GetText() or ""
         SetLFGComment(text)
+        foot.commentEdited = nil
         if LFRQueueFrameComment then LFRQueueFrameComment:SetText(text) end
         if LFRQueueFrameCommentExplanation then
             if strtrim(text) == "" then LFRQueueFrameCommentExplanation:Show() else LFRQueueFrameCommentExplanation:Hide() end
@@ -787,8 +813,19 @@ function UI:CreateFooter()
         RBP:Print("listing comment updated.")
     end
     foot.set:SetScript("OnClick", apply)
-    foot.comment:SetScript("OnEnterPressed", apply)
-    foot.comment:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
+    foot.comment:SetScript("OnEnterPressed", function(box)
+        if foot.set:IsEnabled() then apply() else box:ClearFocus() end
+    end)
+    foot.comment:SetScript("OnEscapePressed", function(box)
+        box:ClearFocus()
+        foot.commentEdited = nil -- back to the listed comment
+        RBP:RequestRefresh()
+    end)
+    -- Typed but not yet set: refreshes leave the text alone until Set, Enter or
+    -- Escape (focus no longer protects it, since a click elsewhere clears focus).
+    foot.comment:SetScript("OnTextChanged", function(_, userInput)
+        if userInput then foot.commentEdited = true end
+    end)
     SetTip(foot.set, "Set comment", "Updates the comment on your current listing (up to 64 characters).")
 
     foot.commentLabel = Text(foot, "GameFontNormalSmall")
@@ -952,7 +989,12 @@ end
 function UI:UpdateHeaders()
     local sort = RBP.db.sort
     for _, h in ipairs(self.headers) do
-        if h.col.sort == sort.key then
+        local sorted = (h.col.sort == sort.key)
+        -- the arrow sits at the right edge: keep right-aligned (iLvl) and centred
+        -- (Lvl, Bosses) titles clear of it
+        local inset = { RIGHT = -12, CENTER = -8 }
+        h.text:SetPoint("RIGHT", sorted and inset[h.col.justify or ""] or -2, 0)
+        if sorted then
             h.text:SetTextColor(1, 1, 1)
             h.arrow:SetTexture(sort.desc and "Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Up"
                 or "Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Up")
@@ -979,6 +1021,10 @@ function UI:UpdateRows()
         else
             row.entry = nil
             row:Hide()
+        end
+        -- rows are reused, so a tooltip open on one may describe the previous entry
+        if GameTooltip:IsOwned(row) then
+            if e then self:ShowEntryTooltip(row, e) else GameTooltip:Hide() end
         end
     end
 
@@ -1357,11 +1403,11 @@ function UI:DetailBlocks(e)
             {
                 label = anyClosed and "expand all" or "collapse all",
                 tip = "Show or hide everyone's stats. Click a name to expand just them.",
-                onClick = function() UI:SetMembersExpanded(e, anyClosed) end,
+                onClick = function() UI:SetMembersExpanded(UI.detailEntry or e, anyClosed) end,
             },
         })
         table.sort(roster, function(a, b)
-            if (a == e) ~= (b == e) then return a == e end
+            if (a.isRosterLeader or false) ~= (b.isRosterLeader or false) then return a.isRosterLeader or false end
             local ra, rb = ROLE_RANK[a.role or ""] or 4, ROLE_RANK[b.role or ""] or 4
             if ra ~= rb then return ra < rb end
             return a.name < b.name
@@ -1369,7 +1415,7 @@ function UI:DetailBlocks(e)
         for _, m in ipairs(roster) do
             local icon = m.role and RBP.ROLE_ICON[m.role] or Col(C.UNKNOWN, " ? ")
             local tags = {}
-            if m == e then tags[#tags + 1] = RBP.ROLE_ICON.LEADER end
+            if m.isRosterLeader then tags[#tags + 1] = RBP.ROLE_ICON.LEADER end
             local rel = m.relationship or RBP:Relation(m.name)
             if rel == "friend" then tags[#tags + 1] = Col(C.good, "friend")
             elseif rel == "guild" then tags[#tags + 1] = Col("40c8ff", "guild")
@@ -1379,10 +1425,11 @@ function UI:DetailBlocks(e)
                 Col(C.dim, SpecText(m)))
             if (m.level or 0) > 0 and m.level < (e.level or 80) then left = left .. Col(C.warn, " L" .. m.level) end
             if #tags > 0 then left = left .. "  " .. table.concat(tags, " ") end
-            local isLeader = (m == e)
+            local isLeader = m.isRosterLeader
             local hasStats = m.stats and (tonumber(m.stats.maxHealth) or 0) > 0
             if not hasStats then left = left .. "  " .. Col(C.dim, "no stats") end
-            local il = isLeader and e.leaderIlvl or m.ilvl
+            local il -- the group entry's own ilvl is the group average
+            if isLeader then il = m.leaderIlvl else il = m.ilvl end
             local open = self:IsExpanded(m)
             row(left, il and Col(RBP.ItemLevelColor(il), format("%d", floor(il + 0.5))) or Col(C.dim, "-"),
                 { plain = true, split = contentW - 30, icon = true, toggle = m.name, expanded = open })
@@ -1431,6 +1478,46 @@ end
 
 function UI:DetailText(e)
     return self:BlocksText(self:DetailBlocks(e))
+end
+
+-- Everything RenderDetail draws comes from the blocks (functions aside) and the
+-- pane width, so equal signatures mean an identical pane.
+local function BlockSignature(v, out, depth)
+    local t = type(v)
+    if t == "table" then
+        if depth > 4 then out[#out + 1] = tostring(v); return end -- not expected; forces a redraw
+        local keys = {}
+        for k in pairs(v) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        out[#out + 1] = "{"
+        for _, k in ipairs(keys) do
+            if type(v[k]) ~= "function" then
+                out[#out + 1] = tostring(k) .. "="
+                BlockSignature(v[k], out, depth + 1)
+                out[#out + 1] = ";"
+            end
+        end
+        out[#out + 1] = "}"
+    elseif t ~= "function" then
+        out[#out + 1] = tostring(v)
+    end
+end
+
+-- Refreshes come with every server update, keystroke in the search box and
+-- divider move. Re-laying out an unchanged pane (hundreds of font strings for
+-- an expanded 25-man roster) is wasted work and hides and re-shows the header
+-- links under the mouse, so skip it when nothing changed.
+function UI:RenderBlocksIfChanged(blocks)
+    local out = { tostring(contentW), "|" }
+    BlockSignature(blocks, out, 0)
+    local sig = table.concat(out)
+    if sig == self.detailSig then
+        self.detail.scroll:UpdateScrollChildRect() -- the frame may have changed height
+        return false
+    end
+    self.detailSig = sig
+    self:RenderDetail(blocks)
+    return true
 end
 
 function UI:RenderDetail(blocks)
@@ -1727,7 +1814,7 @@ function UI:UpdateDetails()
         self.detailEntry = nil
         d.title:SetText(Col(C.dim, "No selection"))
         d.sub:SetText(Col(C.dim, "Click a row for details. Double-click to whisper, right-click for actions."))
-        self:RenderDetail({})
+        self:RenderBlocksIfChanged({})
         d.whisper:Disable(); d.invite:Disable(); d.ask:Disable()
         return
     end
@@ -1739,7 +1826,7 @@ function UI:UpdateDetails()
     else
         d.sub:SetText(format("Level %d %s%s", e.level, SpecText(e), e.talentString and ("  " .. Col(C.dim, e.talentString)) or ""))
     end
-    self:RenderDetail(self:DetailBlocks(e))
+    self:RenderBlocksIfChanged(self:DetailBlocks(e))
     if self.detailScrollReset then
         self.detailScrollReset = nil
         d.scroll:SetVerticalScroll(0)
@@ -1764,7 +1851,7 @@ function UI:UpdateBanner()
     elseif RBP.noResponse then
         self:SetBanner("bad",
             format("No reply from the server for %s. The Raid Browser may be disabled on this realm, or the server is busy.", RBP:RaidLabel(RBP.noResponse.raidId)),
-            "Retry", function() RBP.noResponse = nil; RBP:Refresh(); RBP:RequestRefresh() end)
+            "Retry", function() RBP:RetryNoResponse() end)
     elseif RBP.groupListedBy and not listedNow then
         self:SetBanner("info",
             format("Your group is listed in %s by %s.", RBP:RaidLabel(RBP.groupListedBy.raidId), RBP.groupListedBy.leader))
@@ -1799,7 +1886,7 @@ function UI:UpdateFooter()
         foot.action:SetWidth(max(80, foot.action:GetTextWidth() + 24))
         foot.action:Show()
         if empowered then foot.action:Enable(); foot.set:Enable() else foot.action:Disable(); foot.set:Disable() end
-        if not foot.comment:HasFocus() then foot.comment:SetText(comment or "") end
+        if not foot.comment:HasFocus() and not foot.commentEdited then foot.comment:SetText(comment or "") end
     elseif RBP.staleListing then
         foot.state:SetText(Col(C.warn, "Listed (client out of sync)"))
         foot.action:Hide()
@@ -1850,7 +1937,7 @@ function UI:ShowStatusTooltip(owner)
             GameTooltip:AddDoubleLine("Live", RBP:RaidLabel(joined), 0.7, 0.7, 0.7, 1, 1, 1)
         end
     else
-        GameTooltip:AddLine("The server normally sends updates for the raid you browse every few seconds while anyone is listed. "
+        GameTooltip:AddLine("Changes to the raid you browse arrive on their own within a few seconds; the age is the time since the list last changed. "
             .. "If the age turns orange, updates have stopped arriving; Refresh reloads the list.", 1, 0.82, 0, true)
     end
     GameTooltip:Show()
