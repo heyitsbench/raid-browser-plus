@@ -24,7 +24,7 @@ local COLUMNS = {
     { key = "level",   title = LEVEL_ABBR or "Lvl", width = 24, sort = "level", justify = "CENTER", optional = 2 },
     { key = "class",   title = "Class / Spec", width = 124, sort = "class" },
     { key = "roles",   title = "Roles", width = 52, sort = "role",
-      tip = "Players: the roles they listed.\nGroups: |cff4fa3fftanks|r |cff4fff7ahealers|r |cffff6060damage|r, inferred from each member's talents. |cffb0b0b0?|r = can't tell: a hybrid class with no talents spent, or a Blood/Frost death knight or Feral druid without tank stats (members offline since the group was listed send none)." },
+      tip = "Players: the roles they listed.\nGroups: |cff4fa3fftanks|r |cff4fff7ahealers|r |cffff6060damage|r, inferred from each member's talents. |cffb0b0b0?|r = can't tell: a hybrid class with no talents spent, or a Blood/Frost death knight or Feral druid without tank stats (members offline since the group was listed send none).\nChat ads: the roles a group asks for (any = none named), or the roles a player offers." },
     { key = "ilvl",    title = "iLvl", width = 32, sort = "ilvl", justify = "RIGHT" },
     { key = "prog",    title = "Bosses", width = 44, sort = "prog", justify = "CENTER" },
     { key = "raid",    title = "Raid", width = 60, sort = "raid", allOnly = true },
@@ -108,6 +108,13 @@ local function Ago(sec)
     return format("%dh", sec / 3600)
 end
 
+-- Ages in the details pane go by the minute: the pane is redrawn only when its
+-- text changes, and chat ads refresh the list every second.
+local function AgoMinutes(sec)
+    if not sec or sec < 60 then return "under a minute ago" end
+    return Ago(sec) .. " ago"
+end
+
 local function Col(hex, s) return "|cff" .. hex .. tostring(s) .. "|r" end
 
 local function FmtIlvl(v)
@@ -142,6 +149,37 @@ local function CompText(comp, icons)
     local s = Col(C.TANK, t) .. " " .. Col(C.HEALER, h) .. " " .. Col(C.DAMAGER, d)
     if u > 0 then s = s .. " " .. Col(C.UNKNOWN, "?" .. u) end
     return s
+end
+
+local ROLE_WORD = { TANK = "tank", HEALER = "healer", DAMAGER = "damage" }
+
+-- "1 tank  2 healers  damage" from an ad's roles; "any role" when it named none.
+local function AdRolesText(ad)
+    if ad.anyRole then return "any role" end
+    local parts = {}
+    for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+        local v = ad.roles[role]
+        if v then
+            local n = type(v) == "number" and v or nil
+            parts[#parts + 1] = RBP.ROLE_ICON[role] .. " " .. (n and (n .. " ") or "") .. ROLE_WORD[role]
+                .. ((n and n > 1 and role ~= "DAMAGER") and "s" or "")
+        end
+    end
+    return #parts > 0 and table.concat(parts, "   ") or Col(C.dim, "not given")
+end
+
+local function GSText(gs) return gs and format("%.1fk", gs / 1000) or "" end
+
+local function AdNotes(ad, isGroup)
+    local t = {}
+    if ad.fresh then t[#t + 1] = "fresh run" end
+    if ad.reserved then t[#t + 1] = "items reserved" end
+    if ad.achievement or ad.achievementLinked then
+        t[#t + 1] = isGroup and "achievement asked for" or "achievement linked"
+    end
+    if ad.discord then t[#t + 1] = "Discord" end
+    if ad.gdkp then t[#t + 1] = "GDKP" end
+    return t
 end
 
 local function IsNew(e)
@@ -385,9 +423,12 @@ function UI:CreateFilters()
 
     local _, soloText = Check("RaidBrowserPlusShowSolo", "Players", "Show players listed on their own.", "solo")
     local _, groupText = Check("RaidBrowserPlusShowGroups", "Groups", "Show listed groups.", "groups", soloText, 8)
+    local _, chatText = Check("RaidBrowserPlusShowChat", "Chat",
+        "Show raid ads read from chat: groups recruiting (LFM) and players looking for a raid, each with a chat icon. "
+        .. "Players and Groups apply to them too. Sources and expiry: /rbp chat.", "chat", groupText, 8)
 
     local rolesLabel = Text(f, "GameFontNormalSmall")
-    rolesLabel:SetPoint("LEFT", groupText, "RIGHT", 18, 0)
+    rolesLabel:SetPoint("LEFT", chatText, "RIGHT", 18, 0)
     rolesLabel:SetText("Roles:")
     self.roleButtons = {}
     local prev = rolesLabel
@@ -1064,11 +1105,21 @@ function UI:SetRow(row, e)
     if selected then row.sel:Show() else row.sel:Hide() end
     if IsNew(e) then row.accent:Show() else row.accent:Hide() end
 
+    if e.isChat then return self:SetChatRow(row, e) end
+
     local cells = row.cells
     local dim = e.isSelf
 
-    cells.name:SetText(Col(NameColor(e), e.name))
-    if e.isGroup then row.groupIcon:Show() else row.groupIcon:Hide() end
+    -- a small chat icon after the name: also advertising in chat (see details)
+    cells.name:SetText(Col(NameColor(e), e.name) .. (e.chatAd and (" |T" .. RBP.CHAT_ICON .. ":11:11|t") or ""))
+    if e.isGroup then
+        row.groupIcon:SetTexture("Interface\\LFGFrame\\LFGRole") -- the row may have shown a chat ad before
+        local gc = RBP.LFGROLE_COORDS.GROUP
+        row.groupIcon:SetTexCoord(gc[1], gc[2], gc[3], gc[4])
+        row.groupIcon:Show()
+    else
+        row.groupIcon:Hide()
+    end
 
     cells.level:SetText(e.level > 0 and Col(dim and C.dim or "ffffff", e.level) or "")
 
@@ -1117,10 +1168,64 @@ function UI:SetRow(row, e)
     cells.comment:SetText(Col(dim and C.dim or "ffffff", ((e.comment or ""):gsub("[\r\n]+", " "))))
 end
 
+-- A raid ad from chat: the chat icon where a group has the crown, LFM and how
+-- full the raid is (groups) or the class (players), the roles asked for or
+-- offered, the raid(s) named, the channel and the message.
+function UI:SetChatRow(row, e)
+    local cells, ad, dim = row.cells, e.ad, e.isSelf
+    cells.name:SetText(Col(NameColor(e), e.name))
+    row.groupIcon:SetTexture(RBP.CHAT_ICON)
+    row.groupIcon:SetTexCoord(0, 1, 0, 1)
+    row.groupIcon:Show()
+    cells.level:SetText("")
+    local tc = CLASS_ICON_TCOORDS and e.class and CLASS_ICON_TCOORDS[e.class]
+    if tc then
+        row.classIcon:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
+        row.classIcon:Show()
+    else
+        row.classIcon:Hide()
+    end
+    if e.isGroup then
+        cells.class:SetText(Col("ffd100", "LFM") .. (ad.fill and ("  " .. Col("ffffff", ad.fill)) or ""))
+    else
+        cells.class:SetText(Col(dim and C.dim or RBP:ClassColor(e.class), e.className ~= "" and e.className or "LF raid"))
+    end
+    for _, t in pairs(row.roleTex) do t:Hide() end
+    if ad.anyRole then
+        cells.roles:SetText(Col(C.dim, "any"))
+    else
+        cells.roles:SetText("")
+        local texture = dim and "Interface\\LFGFrame\\LFGRole_BW" or "Interface\\LFGFrame\\LFGRole"
+        if e.isTank then row.roleTex.TANK:SetTexture(texture); row.roleTex.TANK:Show() end
+        if e.isHealer then row.roleTex.HEALER:SetTexture(texture); row.roleTex.HEALER:Show() end
+        if e.isDamage then row.roleTex.DAMAGER:SetTexture(texture); row.roleTex.DAMAGER:Show() end
+    end
+    cells.ilvl:SetText(Col(C.dim, "-"))
+    cells.prog:SetText(ad.progress and Col(C.warn, ad.progress) or Col(C.dim, "-"))
+    cells.raid:SetText(Col("d0d0d0", e.raidShort or ""))
+    cells.zone:SetText(Col(C.dim, e.area or ""))
+    cells.comment:SetText(Col(dim and C.dim or "ffffff", ((e.comment or ""):gsub("[\r\n]+", " "))))
+end
+
 ---------------------------------------------------------------------------
 -- Tooltip, menu
 ---------------------------------------------------------------------------
+function UI:ShowChatTooltip(owner, e)
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT", 0, -ROW_H)
+    local ad = e.ad
+    GameTooltip:AddLine(Col(RBP:ClassColor(e.class), e.name) .. "  " .. RBP.CHAT_ICON_TEXT)
+    GameTooltip:AddLine(format("%s in %s, %s ago", e.isGroup and "Recruiting" or "Looking for a raid",
+        e.area or "chat", Ago(floor(GetTime() - e.seen))), 1, 0.82, 0)
+    GameTooltip:AddLine(table.concat(e.raidLabels, ", "), 0.7, 0.7, 0.7)
+    GameTooltip:AddLine((e.isGroup and "Needs: " or "Plays: ") .. AdRolesText(ad), 1, 1, 1)
+    if ad.gs then GameTooltip:AddLine("GearScore " .. GSText(ad.gs) .. (e.isGroup and "+" or ""), 1, 1, 1) end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(e.comment, 1, 1, 1, true)
+    GameTooltip:Show()
+end
+
 function UI:ShowEntryTooltip(owner, e)
+    if e.isChat then return self:ShowChatTooltip(owner, e) end
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT", 0, -ROW_H)
     local cc = RBP:ClassColor(e.class)
     GameTooltip:AddLine(Col(cc, e.name) .. (e.isGroup and ("  " .. RBP.ROLE_ICON.LEADER) or ""))
@@ -1321,6 +1426,24 @@ function UI:DetailBlocks(e)
         B[#B + 1] = b
     end
     local function text(t) if not skip then B[#B + 1] = { kind = "text", text = t } end end
+    local now = floor(GetTime())
+
+    if e.isChat then
+        local ad = e.ad
+        row("Raid", table.concat(e.raidLabels, ", "))
+        row(e.isGroup and "Needs" or "Plays", AdRolesText(ad))
+        if ad.gs then row(e.isGroup and "GearScore asked" or "GearScore", GSText(ad.gs) .. (e.isGroup and "+" or "")) end
+        if ad.fill then row("Members", ad.fill) end
+        if ad.progress then row("Progress", Col(C.warn, ad.progress)) end
+        local notes = AdNotes(ad, e.isGroup)
+        if #notes > 0 then row("Notes", table.concat(notes, ", ")) end
+        row("Seen", format("%s in %s", AgoMinutes(now - floor(e.seen)), e.area or "chat"))
+        if e.posts > 1 then row("Posted", format("%d times, first %s", e.posts, AgoMinutes(now - floor(e.firstSeen)))) end
+        header("Ad", "comment")
+        text(e.comment)
+        text(Col(C.dim, "Raid, roles and GearScore above are read from the message, so check the ad itself."))
+        return B
+    end
 
     if not e.multi then row("Raid", RBP:RaidLabel(e.raidId)) end
     if e.isGroup then
@@ -1339,7 +1462,7 @@ function UI:DetailBlocks(e)
     if e.initial then
         row("First seen", Col(C.dim, "when you started browsing"))
     elseif e.firstSeen then
-        row("First seen", Ago(GetTime() - e.firstSeen) .. " ago")
+        row("First seen", AgoMinutes(GetTime() - e.firstSeen))
     end
 
     if e.comment and e.comment ~= "" then
@@ -1452,6 +1575,12 @@ function UI:DetailBlocks(e)
         if missing > 0 then
             text(Col(C.dim, format("+%d member%s not returned by the client", missing, missing == 1 and "" or "s")))
         end
+    end
+    if e.chatAd then
+        local c = e.chatAd
+        header("Also in chat", "chatad")
+        text(c.comment)
+        row("Seen", format("%s in %s", AgoMinutes(now - floor(c.seen)), c.area or "chat"))
     end
     return B
 end
@@ -1820,8 +1949,16 @@ function UI:UpdateDetails()
     end
     self.detailEntry = e
     local cc = RBP:ClassColor(e.class)
-    d.title:SetText(Col(cc, e.name) .. (e.isGroup and (" " .. RBP.ROLE_ICON.LEADER) or ""))
-    if e.isGroup then
+    if e.isChat then
+        d.title:SetText(Col(cc, e.name) .. " " .. RBP.CHAT_ICON_TEXT)
+        d.sub:SetText(e.isGroup and format("Recruiting in %s", e.area or "chat")
+            or format("%s looking for a raid in %s", e.className ~= "" and e.className or "Player", e.area or "chat"))
+    else
+        d.title:SetText(Col(cc, e.name) .. (e.isGroup and (" " .. RBP.ROLE_ICON.LEADER) or ""))
+    end
+    if e.isChat then
+        -- set above
+    elseif e.isGroup then
         d.sub:SetText(format("Group led by a level %d %s", e.level, SpecText(e)))
     else
         d.sub:SetText(format("Level %d %s%s", e.level, SpecText(e), e.talentString and ("  " .. Col(C.dim, e.talentString)) or ""))
@@ -1906,7 +2043,8 @@ function UI:StatusText()
     if RBP.mode == "all" then
         local loaded, n = RBP:ScanCoverage()
         local loading = RBP.pendingJoin and ("  -  loading " .. RBP:RaidShort(RBP.pendingJoin)) or ""
-        return format("%d listing%s  -  %d/%d raids loaded%s%s", total, total == 1 and "" or "s",
+        local chat = (RBP.chatCount or 0) > 0 and format(" (%d from chat)", RBP.chatCount) or ""
+        return format("%d listing%s%s  -  %d/%d raids loaded%s%s", total, total == 1 and "" or "s", chat,
             loaded, n, loading, suffix)
     end
     if not RBP.currentRaid then return "" end
@@ -1916,8 +2054,9 @@ function UI:StatusText()
     local age = RBP:ListAge(RBP.currentRaid)
     local ageText = age and Ago(age) .. " ago" or "waiting"
     if RBP:IsUpdateStale() then ageText = Col(C.warn, ageText) end
-    return format("%d listing%s (%d group%s)  -  updated %s%s", total, total == 1 and "" or "s",
-        groups, groups == 1 and "" or "s", ageText, suffix)
+    local chat = (RBP.chatCount or 0) > 0 and format(", %d from chat", RBP.chatCount) or ""
+    return format("%d listing%s (%d group%s%s)  -  updated %s%s", total, total == 1 and "" or "s",
+        groups, groups == 1 and "" or "s", chat, ageText, suffix)
 end
 
 function UI:UpdateStatus()

@@ -34,6 +34,17 @@ local DEFAULTS = {
         solo = true, groups = true,
         tank = false, healer = false, dps = false,
         minIlvl = 0, freshOnly = false, hideIgnored = true, search = "",
+        chat = true,       -- show raid ads read from chat
+    },
+    chat = {               -- reading raid ads from chat (Chat.lua, /rbp chat)
+        enabled = true,
+        lfm = true,        -- groups recruiting
+        lf = true,         -- players looking for a raid
+        channels = "all",  -- "all": every public channel except those in list; "named": only those in list
+        list = {},
+        yell = true,
+        guild = false,
+        expire = 5,        -- minutes an ad stays after its last post
     },
     sort = { key = "ilvl", desc = true },
     alert = false,
@@ -130,7 +141,16 @@ function RBP:OnSecond()
     if self:IsWatching() and LFRBrowseFrame and LFRBrowseFrame.timeToClear then
         LFRBrowseFrame.timeToClear = nil
     end
-    if self.UI and self.UI:IsShown() then self.UI:UpdateStatus() end
+    if self.UI and self.UI:IsShown() then
+        self.UI:UpdateStatus()
+        -- chat ads arrive many times a second on busy realms: refresh at most once
+        -- a second for them, and now and then so expired ones drop out
+        self.chatTick = (self.chatTick or 0) + 1
+        if self.chatDirty or (self.chatTick % 10 == 0 and next(self.chatAds or {})) then
+            self.chatDirty = nil
+            self:RequestRefresh()
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -194,6 +214,8 @@ function RBP:BuildRaidList()
             tremove(self.headers, i)
         end
     end
+    -- chat ads are matched to raids by name: match them again
+    for _, rec in pairs(self.chatAds or {}) do rec.entry = nil end
     return #self.raidOrder > 0
 end
 
@@ -639,6 +661,7 @@ end
 -- Key that identifies a row: per raid in single-raid mode, per player in the
 -- all-raids view (where a player's raids are merged into one row).
 function RBP:EntryKey(e)
+    if e.isChat then return "chat:" .. e.kind .. ":" .. e.name end
     if self.mode == "all" then
         return "all:" .. (e.isGroup and "g:" or "p:") .. e.name
     end
@@ -707,6 +730,25 @@ function RBP:BuildView()
     wipe(view)
     local list = self:AllEntries()
     if self.mode == "all" then list = self:MergeEntries(list) end
+    -- Chat ads join the list. One from a sender already listed the same way (a
+    -- group, or a player on their own) is shown in that listing's details instead.
+    local listed = {}
+    for _, e in ipairs(list) do
+        e.chatAd = nil
+        listed[(e.isGroup and "g:" or "p:") .. e.name] = e
+    end
+    self.chatCount = 0
+    if self.ChatEntries and self.db.filters.chat then
+        for _, c in ipairs(self:ChatEntries()) do
+            local same = listed[(c.isGroup and "g:" or "p:") .. c.name]
+            if same then
+                same.chatAd = c
+            else
+                list[#list + 1] = c
+                self.chatCount = self.chatCount + 1
+            end
+        end
+    end
     self.lastList = list
     for _, e in ipairs(list) do
         e.relation = self:Relation(e.name)
@@ -768,8 +810,9 @@ function RBP:SetMode(mode, raidId)
     else
         self:ScanStep()
     end
-    -- keep the selected player selected under the new mode's row key
-    if selected then
+    -- keep the selected player selected under the new mode's row key (a chat
+    -- ad's key is the same in both)
+    if selected and not selected.isChat then
         self.UI.selectedKey = mode == "all"
             and ("all:" .. (selected.isGroup and "g:" or "p:") .. selected.name)
             or (tostring(self.currentRaid) .. ":" .. selected.name)
@@ -1142,7 +1185,7 @@ function RBP:FormatTemplate(kind, e)
     local spec, class, role = self:PlayerSpec()
     local vals = {
         name = e.name,
-        raid = self:RaidLabel(e.raidId),
+        raid = e.raidLabel or self:RaidLabel(e.raidId),
         spec = spec or "",
         class = class or "",
         ilvl = format("%d", floor(self:PlayerItemLevel())), -- the list drops decimals too
@@ -1228,6 +1271,8 @@ function RBP:Slash(msg)
         end
     elseif cmd == "dump" then
         self:Dump(rest)
+    elseif cmd == "chat" then
+        self:ChatCommand(rest)
     elseif cmd == "gs" or cmd == "gearscore" then
         self.db.showGearScore = not self.db.showGearScore
         self:RequestRefresh()
@@ -1281,6 +1326,7 @@ function RBP:Slash(msg)
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp alert - toggle new-listing alerts   /rbp sound - alert sound")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp template [group|player <text>] - whisper templates")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp scope level|all   /rbp ignored   /rbp allstats   /rbp gs - your GearScore")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rbp chat - raid ads from chat (/rbp chat help for its options)")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp dump [n] - print raw API returns   /rbp reset")
     end
 end
