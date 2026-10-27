@@ -1,0 +1,123 @@
+name: Release
+
+# Publishes a release when the "## Version:" line in raid-browser-plus.toc
+# changes to a version that has no tag yet. Other pushes that touch the .toc
+# (Notes, Interface, ...) find the tag already there and do nothing.
+#
+# Release:  "Raid Browser+ (v1.2.3)", tag v1.2.3 on the pushed commit
+# Notes:    the body of the commit that bumped the version, if it has one;
+#           otherwise "- <subject>" for each commit since the last release
+# Asset:    raid-browser-plus.zip, holding only the addon's files in a
+#           raid-browser-plus/ folder (nothing whose path starts with a dot)
+on:
+  push:
+    branches: [main]
+    paths:
+      - raid-browser-plus.toc
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      ADDON: raid-browser-plus
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # all tags and history, for the notes
+
+      - name: Read the version from the .toc
+        id: version
+        run: |
+          version=$(sed -n 's/^## Version:[[:space:]]*//p' "$ADDON.toc" | head -n 1 | tr -d '\r' | sed 's/[[:space:]]*$//')
+          if ! printf '%s' "$version" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z.+-]*$'; then
+            echo "::error file=$ADDON.toc::'## Version:' is missing or not a usable tag name: '$version'"
+            exit 1
+          fi
+          tag="v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "Tag $tag already exists, so there is nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $version has no tag yet: releasing $tag."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the zip
+        if: steps.version.outputs.release == 'true'
+        run: |
+          # Committed files only, minus anything whose path has a part starting
+          # with a dot (.git is never in an archive; this drops .github,
+          # .gitignore, .gitattributes, ...). The folder name must match the .toc.
+          git archive --format=zip --prefix="$ADDON/" -o "$ADDON.zip" HEAD -- . ':(exclude).*' ':(exclude)*/.*'
+          unzip -Z1 "$ADDON.zip"
+          if unzip -Z1 "$ADDON.zip" | grep -E '(^|/)\.'; then
+            echo "::error::the zip contains dot files or folders (listed above)"
+            exit 1
+          fi
+          unzip -Z1 "$ADDON.zip" | grep -qx "$ADDON/$ADDON.toc" || { echo "::error::$ADDON.toc is missing from the zip"; exit 1; }
+
+      - name: Write the release notes
+        if: steps.version.outputs.release == 'true'
+        run: |
+          # The commit that last changed the version line, and the release before it
+          bump=$(git log -1 --format=%H -G '^## Version:' -- "$ADDON.toc")
+          prev=$(git describe --tags --abbrev=0 --match 'v*' "$bump^" 2> /dev/null || true)
+
+          # 1. The bump commit's message body, minus trailers (Co-Authored-By: ...)
+          git log -1 --format=%b "$bump" | tr -d '\r' | awk '
+            { line[NR] = $0 }
+            END {
+              n = NR
+              while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--
+              m = n
+              while (m > 0 && line[m] ~ /^[A-Za-z][A-Za-z0-9-]*: /) m--
+              if (m < n && (m == 0 || line[m] ~ /^[[:space:]]*$/)) n = m
+              while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--
+              for (i = 1; i <= n; i++) print line[i]
+            }' > notes.md
+
+          # 2. Otherwise the commits since the previous release, oldest first,
+          #    leaving out commits that only change the version line
+          if [ ! -s notes.md ]; then
+            if [ -z "$prev" ]; then
+              echo "Initial release." > notes.md
+            else
+              for c in $(git rev-list --reverse --no-merges "$prev..HEAD"); do
+                files=$(git diff-tree --no-commit-id --name-only -r "$c")
+                if [ "$files" = "$ADDON.toc" ] && ! git diff-tree -p --no-commit-id -U0 "$c" \
+                    | grep -E '^[+-]' | grep -vE '^(\+\+\+|---) ' | grep -qvE '^[+-]## Version:'; then
+                  continue
+                fi
+                git log -1 --format='- %s' "$c" >> notes.md
+              done
+              [ -s notes.md ] || echo "No changes listed since $prev." > notes.md
+            fi
+          fi
+          cat notes.md
+
+      - name: Create the release
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          title=$(sed -n 's/^## Title:[[:space:]]*//p' "$ADDON.toc" | head -n 1 | tr -d '\r' \
+            | sed -E 's/\|c[0-9A-Fa-f]{8}//g; s/\|r//g; s/[[:space:]]*$//')
+          flags=()
+          case "$VERSION" in *-*) flags+=(--prerelease) ;; esac # e.g. 1.2.0-beta1
+          gh release create "$TAG" "$ADDON.zip" \
+            --target "$GITHUB_SHA" \
+            --title "${title:-$ADDON} ($TAG)" \
+            --notes-file notes.md \
+            "${flags[@]}"
