@@ -4,7 +4,9 @@
 -- and Defaults resets the settings of the panel shown.
 
 local RBP = RaidBrowserPlus
+if RBP.needsRestart then return end -- see Core.lua
 local UI = RBP.UI
+local L = RBP.L
 local format, floor = string.format, math.floor
 
 local Options = {}
@@ -75,6 +77,13 @@ local function Check(panel, label, tip, get, set)
     return cb
 end
 
+-- Put a check box to the right of another one on the same line, at least x
+-- pixels in, and past the first one's label (labels differ by language).
+local function Beside(cb, prev, x)
+    local w = _G[prev:GetName() .. "Text"]:GetStringWidth() or 0
+    cb:SetPoint("LEFT", prev, "LEFT", math.max(x, floor(w + 40)), 0)
+end
+
 local function Radio(panel, label, tip, value, get, set)
     local rb = CreateFrame("CheckButton", NextName("Radio"), panel, "UIRadioButtonTemplate")
     local text = _G[rb:GetName() .. "Text"]
@@ -139,6 +148,8 @@ local function Button(panel, text, width, onClick)
     b:SetWidth(width)
     b:SetHeight(22)
     b:SetText(text)
+    local tw = b.GetTextWidth and b:GetTextWidth() or 0
+    if tw + 24 > width then b:SetWidth(floor(tw + 24)) end -- longer labels in some languages
     b:SetScript("OnClick", onClick)
     return b
 end
@@ -226,45 +237,38 @@ local function BuildMain()
     end)
     local db = function() return RBP.db end
 
-    local sub = Title(p, "Raid Browser|cff33ff99+|r", "Each setting also has a /rbp command (/rbp help lists them). "
-        .. "Whisper templates and chat ads have their own pages under this one.")
-    local open = Button(p, "Open the window", 120, function()
+    local sub = Title(p, "Raid Browser|cff33ff99+|r", L.OPT_MAIN_NOTE)
+    local open = Button(p, L.OPT_OPEN, 120, function()
         if InterfaceOptionsFrame and InterfaceOptionsFrame:IsShown() then InterfaceOptionsFrame_Show() end -- closes it
         RBP:Show()
     end)
     open:SetPoint("TOPRIGHT", -16, -14)
 
-    local h1 = Header(p, "Alerts")
+    local h1 = Header(p, L.OPT_ALERTS)
     h1:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", 0, -14)
-    local alert = Check(p, "Alert on new listings",
-        "A sound and a chat line when a listing that matches your filters shows up. While on, the addon keeps "
-        .. "browsing the raid you loaded last after you close the window.\n\n/rbp alert",
+    local alert = Check(p, L.OPT_ALERT, L.OPT_ALERT_TIP .. "\n\n/rbp alert",
         function() return db().alert end, function(v) RBP:SetAlert(v) end)
     alert:SetPoint("TOPLEFT", h1, "BOTTOMLEFT", -2, -4)
-    local sound = Check(p, "Play a sound with alerts", "/rbp sound",
+    local sound = Check(p, L.OPT_SOUND, "/rbp sound",
         function() return db().alertSound end, function(v) db().alertSound = v end)
     sound:SetPoint("TOPLEFT", alert, "BOTTOMLEFT", 16, 0)
 
-    local h2 = Header(p, "List and details")
+    local h2 = Header(p, L.OPT_LIST)
     h2:SetPoint("TOPLEFT", sound, "BOTTOMLEFT", -14, -10)
-    local scope = Check(p, "Include raids below your level in All raids",
-        "Off: the all-raids view covers the raids you can enter at your level. On: every raid the Raid Browser offers."
-        .. "\n\n/rbp scope level|all",
+    local scope = Check(p, L.OPT_SCOPE, L.OPT_SCOPE_TIP .. "\n\n/rbp scope level|all",
         function() return db().scanScope == "all" end, function(v) db().scanScope = v and "all" or "level"; Changed() end)
     scope:SetPoint("TOPLEFT", h2, "BOTTOMLEFT", -2, -4)
-    local ignored = Check(p, "Hide players on your ignore list", "/rbp ignored",
+    local ignored = Check(p, L.OPT_IGNORED, "/rbp ignored",
         function() return db().filters.hideIgnored end, function(v) db().filters.hideIgnored = v; Changed() end)
     ignored:SetPoint("TOPLEFT", scope, "BOTTOMLEFT", 0, 0)
-    local allstats = Check(p, "Show every stat in the details",
-        "Off: only the stats that matter for the player's class and spec. The show all link in the details does the same."
-        .. "\n\n/rbp allstats",
+    local allstats = Check(p, L.OPT_ALLSTATS, L.OPT_ALLSTATS_TIP .. "\n\n/rbp allstats",
         function() return db().showAllStats end, function(v) RBP:SetShowAllStats(v) end)
     allstats:SetPoint("TOPLEFT", ignored, "BOTTOMLEFT", 0, 0)
-    local gs = Check(p, "Show your GearScore and item level in the footer", "/rbp gs",
+    local gs = Check(p, L.OPT_GS, "/rbp gs",
         function() return db().showGearScore end, function(v) db().showGearScore = v; Changed() end)
     gs:SetPoint("TOPLEFT", allstats, "BOTTOMLEFT", 0, 0)
 
-    local reset = Button(p, "Reset window position", 160, function()
+    local reset = Button(p, L.OPT_RESET, 160, function()
         RBP.db.window = Copy(RBP.DEFAULTS.window)
         if UI and UI.frame then
             UI:ResetPosition()
@@ -273,66 +277,57 @@ local function BuildMain()
         RBP:RequestRefresh() -- the details are drawn for the pane's width
     end)
     reset:SetPoint("TOPLEFT", gs, "BOTTOMLEFT", 4, -14)
-    Tip(reset, "Center the window at its default size, with the details pane at its default width.")
+    Tip(reset, L.OPT_RESET_TIP)
     p.resetButton = reset
     return p
 end
 
 local function BuildTemplates()
-    local p = NewPanel("Whisper templates", MAIN_NAME, { "templates" }, function() Changed() end)
+    local p = NewPanel(L.OPT_TEMPLATES, MAIN_NAME, { "templates" }, function() Changed() end)
     local function t() return RBP.db.templates end
-    local sub = Title(p, "Whisper templates", "Ask to join and Recruit open a whisper from these, ready to edit before "
-        .. "you send it. /rbp template sets them too.")
+    local sub = Title(p, L.OPT_TEMPLATES, L.OPT_TEMPLATES_NOTE)
 
-    local groupLabel = Note(p, "Ask to join (to a group's leader):")
+    local groupLabel = Note(p, L.OPT_TEMPLATE_GROUP)
     groupLabel:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", 0, -16)
     local group = Edit(p, TEXT_W - 6, 255, function() return t().group end, function(v) t().group = v; Changed() end)
     group:SetPoint("TOPLEFT", groupLabel, "BOTTOMLEFT", 6, -4)
-    local playerLabel = Note(p, "Recruit (to a player):")
+    local playerLabel = Note(p, L.OPT_TEMPLATE_PLAYER)
     playerLabel:SetPoint("TOPLEFT", group, "BOTTOMLEFT", -6, -12)
     local player = Edit(p, TEXT_W - 6, 255, function() return t().player end, function(v) t().player = v; Changed() end)
     player:SetPoint("TOPLEFT", playerLabel, "BOTTOMLEFT", 6, -4)
 
-    local tokens = Note(p, "Tokens:\n"
-        .. "{name}  their name\n"
-        .. "{raid}  the raid, e.g. Icecrown Citadel (25)\n"
-        .. "{spec} {class} {role}  yours\n"
-        .. "{ilvl}  your item level, counted the way the list counts it\n"
-        .. "{gs}  your GearScore\n"
-        .. "{achi}  a link to your best achievement for the raid (left out if the whisper would be too long)", TEXT_W)
+    local tokens = Note(p, L.OPT_TOKENS, TEXT_W)
     tokens:SetPoint("TOPLEFT", player, "BOTTOMLEFT", -6, -14)
     return p
 end
 
 local function BuildChat()
-    local p = NewPanel("Chat ads", MAIN_NAME, { "chat" }, function() Changed(true) end)
+    local p = NewPanel(L.OPT_CHAT, MAIN_NAME, { { "chat", "enabled" }, { "chat", "lfm" }, { "chat", "lf" },
+        { "chat", "alert" }, { "chat", "channels" }, { "chat", "list" }, { "chat", "yell" }, { "chat", "guild" },
+        { "chat", "expire" } }, function() Changed(true) end)
     local function c() return RBP.db.chat end
 
-    local sub = Title(p, "Chat ads", "Raid ads posted in chat, listed with the Raid Browser listings under a speech-bubble "
-        .. "icon. /rbp chat lists the same settings.")
+    local sub = Title(p, L.OPT_CHAT, L.OPT_CHAT_NOTE)
 
-    local enabled = Check(p, "Read raid ads from chat",
-        "Ads are read with English keywords and common shorthand.\n\n/rbp chat on|off",
+    local enabled = Check(p, L.OPT_CHAT_ENABLED, L.OPT_CHAT_ENABLED_TIP .. "\n\n/rbp chat on|off",
         function() return c().enabled end, function(v) c().enabled = v; Changed(true) end)
     enabled:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", -2, -8)
-    local lfm = Check(p, "Groups recruiting (LFM)", "Ads from groups looking for players; listed as groups.\n\n/rbp chat lfm",
+    local lfm = Check(p, L.OPT_CHAT_LFM, L.OPT_CHAT_LFM_TIP .. "\n\n/rbp chat lfm",
         function() return c().lfm end, function(v) c().lfm = v; Changed(true) end)
     lfm:SetPoint("TOPLEFT", enabled, "BOTTOMLEFT", 16, 0)
-    local lf = Check(p, "Players looking (LF)", "Ads from players looking for a raid; listed as players.\n\n/rbp chat lf",
+    local lf = Check(p, L.OPT_CHAT_LF, L.OPT_CHAT_LF_TIP .. "\n\n/rbp chat lf",
         function() return c().lf end, function(v) c().lf = v; Changed(true) end)
-    lf:SetPoint("LEFT", lfm, "LEFT", 180, 0)
-    local alert = Check(p, "Alert on new ads too", "While Alert on new is on (main page or the window), a new ad that "
-        .. "passes your filters plays the alert sound (at most every 10 seconds) and prints a line. Reposts don't."
-        .. "\n\n/rbp chat alert",
+    Beside(lf, lfm, 180)
+    local alert = Check(p, L.OPT_CHAT_ALERT, L.OPT_CHAT_ALERT_TIP .. "\n\n/rbp chat alert",
         function() return c().alert end, function(v) c().alert = v end)
     alert:SetPoint("TOPLEFT", lfm, "BOTTOMLEFT", 0, 0)
 
-    local h1 = Header(p, "Where to read them")
+    local h1 = Header(p, L.OPT_WHERE)
     h1:SetPoint("TOPLEFT", alert, "BOTTOMLEFT", -14, -6)
-    local all = Radio(p, "Every public channel, except the ones listed",
+    local all = Radio(p, L.OPT_CHANNELS_ALL,
         "/rbp chat channels all", "all", function() return c().channels end, function(v) c().channels = v; Changed(true) end)
     all:SetPoint("TOPLEFT", h1, "BOTTOMLEFT", 4, -6)
-    local named = Radio(p, "Only the channels listed",
+    local named = Radio(p, L.OPT_CHANNELS_NAMED,
         "/rbp chat channels named", "named", function() return c().channels end, function(v) c().channels = v; Changed(true) end)
     named:SetPoint("TOPLEFT", all, "BOTTOMLEFT", 0, -4)
     local listLabel = Note(p, "")
@@ -351,21 +346,20 @@ local function BuildChat()
         Changed(true)
     end)
     list:SetPoint("TOPLEFT", listLabel, "BOTTOMLEFT", 6, -4)
-    Tip(list, "Channel names with commas between them, e.g. trade, lookingforgroup, global. The zone part of a "
-        .. "name (Trade - Dalaran) isn't needed.\n\n/rbp chat channel <name>")
-    local yell = Check(p, "Yells", "/rbp chat yell",
+    Tip(list, L.OPT_LIST_TIP .. "\n\n/rbp chat channel <name>")
+    local yell = Check(p, L.OPT_YELLS, "/rbp chat yell",
         function() return c().yell end, function(v) c().yell = v; Changed(true) end)
     yell:SetPoint("TOPLEFT", list, "BOTTOMLEFT", -12, -4)
-    local guild = Check(p, "Guild chat", "/rbp chat guild",
+    local guild = Check(p, L.OPT_GUILD, "/rbp chat guild",
         function() return c().guild end, function(v) c().guild = v; Changed(true) end)
-    guild:SetPoint("LEFT", yell, "LEFT", 180, 0)
+    Beside(guild, yell, 180)
 
-    local expire = Slider(p, 1, 60, function(v) return format("Ads stay %d min after their last post", v) end,
+    local expire = Slider(p, 1, 60, function(v) return format(L.OPT_EXPIRE, v) end,
         function() return math.max(1, tonumber(c().expire) or 5) end,
         function(v) c().expire = v; Changed(true) end)
     expire:SetPoint("TOPLEFT", yell, "BOTTOMLEFT", 8, -22)
 
-    local h3 = Header(p, "Try a message")
+    local h3 = Header(p, L.OPT_TRY)
     h3:SetPoint("TOPLEFT", expire, "BOTTOMLEFT", -6, -22)
     local testBox = CreateFrame("EditBox", NextName("Edit"), p, "InputBoxTemplate")
     testBox:SetWidth(TEXT_W - 90)
@@ -381,16 +375,43 @@ local function BuildChat()
     end
     testBox:SetScript("OnEnterPressed", RunTest)
     p.testBox = testBox
-    local testButton = Button(p, "Test", 70, RunTest)
+    local testButton = Button(p, L.OPT_TEST, 70, RunTest)
     testButton:SetPoint("LEFT", testBox, "RIGHT", 8, 0)
-    Tip(testButton, "Prints in chat how the message is read, and lists it as your own ad (/rbp chat test).")
+    Tip(testButton, L.OPT_TEST_TIP)
 
     function p:UpdateUsable()
         local on = c().enabled
         for _, ctl in ipairs({ lfm, lf, alert, all, named, list, yell, guild, expire }) do SetUsable(ctl, on) end
-        listLabel:SetText(c().channels == "named" and "Channels to read:" or "Channels to leave out:")
+        listLabel:SetText(c().channels == "named" and L.OPT_CHANNELS_READ or L.OPT_CHANNELS_LEFT_OUT)
         listLabel:SetAlpha(on and 1 or 0.5)
     end
+    return p
+end
+
+local function BuildLanguages()
+    local p = NewPanel(L.OPT_LANGUAGES, MAIN_NAME, { { "chat", "languages" } }, function() RBP:ApplyChatLanguages() end)
+    local sub = Title(p, L.OPT_LANGUAGES, L.OPT_LANGUAGES_NOTE)
+    local prev
+    for i, code in ipairs(RBP.CHAT_LOCALE_ORDER) do
+        local cb = Check(p, format("%s (%s%s)", L["LANG_" .. code], code, code == "esES" and ", esMX" or ""), "/rbp chat lang " .. code,
+            function()
+                for _, cd in ipairs(RBP:ChatLanguageCodes()) do if cd == code then return true end end
+                return false
+            end,
+            function() RBP:ToggleChatLanguage(RBP.Lower(code)) end)
+        if prev then cb:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, 0) else cb:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", -2, -12) end
+        prev = cb
+    end
+    local client = Button(p, L.OPT_CLIENT_LANG, 190, function()
+        RBP.db.chat.languages = "client"
+        RBP:ApplyChatLanguages()
+        p:Load()
+    end)
+    client:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 4, -14)
+    Tip(client, L.OPT_CLIENT_LANG_TIP)
+    local note = Note(p, "", TEXT_W)
+    note:SetPoint("TOPLEFT", client, "BOTTOMLEFT", -6, -12)
+    function p:UpdateUsable() note:SetText(format(L.OPT_READING, RBP:ChatLanguageNames())) end
     return p
 end
 
@@ -400,9 +421,13 @@ function Options:Init()
     InterfaceOptions_AddCategory(self.main)
     self.templates = BuildTemplates()
     InterfaceOptions_AddCategory(self.templates)
-    if RBP.ChatCommand then -- the chat page needs Chat.lua
+    if RBP.ChatCommand then -- the chat pages need Chat.lua
         self.chat = BuildChat()
         InterfaceOptions_AddCategory(self.chat)
+        if RBP.CHAT_LOCALES then
+            self.languages = BuildLanguages()
+            InterfaceOptions_AddCategory(self.languages)
+        end
     end
 end
 

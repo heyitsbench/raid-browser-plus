@@ -1,6 +1,8 @@
 -- Raid Browser+ : window
 
 local RBP = RaidBrowserPlus
+if RBP.needsRestart then return end -- see Core.lua
+local L = RBP.L
 local UI = {}
 RBP.UI = UI
 
@@ -22,15 +24,13 @@ local format, floor, max = string.format, math.floor, math.max
 local COLUMNS = {
     { key = "name",    title = NAME or "Name", width = 106, sort = "name" },
     { key = "level",   title = LEVEL_ABBR or "Lvl", width = 24, sort = "level", justify = "CENTER", optional = 2 },
-    { key = "class",   title = "Class / Spec", width = 124, sort = "class" },
-    { key = "roles",   title = "Roles", width = 52, sort = "role",
-      tip = "Players: the roles they listed.\nGroups: |cff4fa3fftanks|r |cff4fff7ahealers|r |cffff6060damage|r, inferred from each member's talents. |cffb0b0b0?|r = can't tell: a hybrid class with no talents spent, or a Blood/Frost death knight or Feral druid without tank stats (members offline since the group was listed send none).\nChat ads: the roles a group asks for (any = none named), or the roles a player offers." },
-    { key = "ilvl",    title = "iLvl", width = 32, sort = "ilvl", justify = "RIGHT",
-      tip = "Average item level as the Raid Browser sends it (groups: their average).\nChat ads: the GearScore a group asks for or a player states (e.g. 5.8k); they sort below Raid Browser entries, by GearScore." },
-    { key = "prog",    title = "Bosses", width = 44, sort = "prog", justify = "CENTER" },
-    { key = "raid",    title = "Raid", width = 60, sort = "raid", allOnly = true },
+    { key = "class",   title = L.COL_CLASS, width = 124, sort = "class" },
+    { key = "roles",   title = L.COL_ROLES, width = 52, sort = "role", tip = L.COL_ROLES_TIP },
+    { key = "ilvl",    title = L.COL_ILVL, width = 32, sort = "ilvl", justify = "RIGHT", tip = L.COL_ILVL_TIP },
+    { key = "prog",    title = L.COL_BOSSES, width = 44, sort = "prog", justify = "CENTER" },
+    { key = "raid",    title = L.COL_RAID, width = 60, sort = "raid", allOnly = true },
     { key = "zone",    title = ZONE or "Zone", width = 90, sort = "zone", optional = 1 },
-    { key = "comment", title = "Comment", flex = true, min = 80, sort = "comment" },
+    { key = "comment", title = L.COL_COMMENT, flex = true, min = 80, sort = "comment" },
 }
 local MIN_WIDTH = 920
 local COL_GAP = 6
@@ -64,11 +64,34 @@ local function Text(parent, template, layer)
     return fs
 end
 
+-- A button at least `width` wide, wider when its (translated) text needs it.
+local function FitButton(b, text)
+    b:SetText(text)
+    local fs = b:GetFontString()
+    local need = fs and fs:GetStringWidth() and (fs:GetStringWidth() + 20) or 0
+    b:SetWidth(max(b.minWidth or 0, need))
+end
+UI.FitButton = FitButton
+
+-- Smaller text on a fixed-width button when a translation doesn't fit.
+function UI.ShrinkToFit(b)
+    local fs = b:GetFontString()
+    if not (fs and fs.GetStringWidth) then return end
+    b:SetNormalFontObject(GameFontNormal)
+    b:SetHighlightFontObject(GameFontHighlight)
+    b:SetDisabledFontObject(GameFontDisable)
+    if (fs:GetStringWidth() or 0) > b:GetWidth() - 8 then
+        b:SetNormalFontObject(GameFontNormalSmall)
+        b:SetHighlightFontObject(GameFontHighlightSmall)
+        b:SetDisabledFontObject(GameFontDisableSmall)
+    end
+end
+
 local function NewButton(name, parent, text, width, height)
     local b = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
-    b:SetWidth(width)
+    b.minWidth = width
     b:SetHeight(height or 22)
-    b:SetText(text)
+    FitButton(b, text)
     return b
 end
 
@@ -104,17 +127,18 @@ local function Num(n)
 end
 
 local function Ago(sec)
-    if not sec then return "never" end
-    if sec < 60 then return format("%ds", sec) end
-    if sec < 3600 then return format("%dm", sec / 60) end
-    return format("%dh", sec / 3600)
+    if not sec then return L.NEVER end
+    if sec < 60 then return format(L.AGO_S, sec) end
+    if sec < 3600 then return format(L.AGO_M, sec / 60) end
+    return format(L.AGO_H, sec / 3600)
 end
+local function AgoText(sec) return format(L.AGO, Ago(sec)) end -- "3m ago"
 
 -- Ages in the details pane go by the minute: the pane is redrawn only when its
 -- text changes, and chat ads refresh the list every second.
 local function AgoMinutes(sec)
-    if not sec or sec < 60 then return "under a minute ago" end
-    return Ago(sec) .. " ago"
+    if not sec or sec < 60 then return L.UNDER_A_MINUTE_AGO end
+    return AgoText(sec)
 end
 
 local function Col(hex, s) return "|cff" .. hex .. tostring(s) .. "|r" end
@@ -137,8 +161,8 @@ end
 -- "sent 3m ago, received 1m ago"; exact (tooltips) or by the minute (details)
 local function ContactText(c, ago)
     local now, t = GetTime(), {}
-    if c.sent then t[#t + 1] = "you whispered " .. ago(floor(now - c.sent)) end
-    if c.received then t[#t + 1] = "they whispered " .. ago(floor(now - c.received)) end
+    if c.sent then t[#t + 1] = format(L.YOU_WHISPERED, ago(floor(now - c.sent))) end
+    if c.received then t[#t + 1] = format(L.THEY_WHISPERED, ago(floor(now - c.received))) end
     return table.concat(t, ", ")
 end
 
@@ -149,9 +173,9 @@ local function LockoutText(ids)
         local l = id and RBP:LockoutFor(id)
         if l then
             local left = math.max(0, l.resetAt - GetTime())
-            local reset = left < 60 and "under a minute"
+            local reset = left < 60 and L.UNDER_A_MINUTE
                 or (SecondsToTime and SecondsToTime(left, true, nil, 2) or Ago(left))
-            t[#t + 1] = (#ids > 1 and (RBP:RaidLabel(id) .. ": ") or "") .. "saved, resets in " .. reset
+            t[#t + 1] = (#ids > 1 and (RBP:RaidLabel(id) .. ": ") or "") .. format(L.SAVED_RESETS_IN, reset)
         end
     end
     return #t > 0 and Col(C.warn, table.concat(t, "; ")) or nil
@@ -174,7 +198,7 @@ end
 
 local function SpecText(rec)
     local cls = rec.className or ""
-    if rec.specName and rec.specName ~= "" then return rec.specName .. " " .. cls end
+    if rec.specName and rec.specName ~= "" then return RBP.SpecClass(RBP.SpecLabel(rec.specName, rec.class), cls) end
     return cls
 end
 
@@ -191,31 +215,28 @@ local function CompText(comp, icons)
     return s
 end
 
-local ROLE_WORD = { TANK = "tank", HEALER = "healer", DAMAGER = "damage" }
-
 -- "1 tank  2 healers  damage" from an ad's roles; "any role" when it named none.
 local function AdRolesText(ad)
-    if ad.anyRole then return "any role" end
+    if ad.anyRole then return L.ANY_ROLE end
     local parts = {}
     for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
         local v = ad.roles[role]
         if v then
             local n = type(v) == "number" and v or nil
-            parts[#parts + 1] = RBP.ROLE_ICON[role] .. " " .. (n and (n .. " ") or "") .. ROLE_WORD[role]
-                .. ((n and n > 1 and role ~= "DAMAGER") and "s" or "")
+            parts[#parts + 1] = RBP.ROLE_ICON[role] .. " " .. (n and (n .. " ") or "") .. RBP.Plural(n or 1, "ROLE_" .. role)
         end
     end
-    return #parts > 0 and table.concat(parts, "   ") or Col(C.dim, "not given")
+    return #parts > 0 and table.concat(parts, "   ") or Col(C.dim, L.NOT_GIVEN)
 end
 
 local function GSText(gs) return gs and format("%.1fk", gs / 1000) or "" end
 
 local function AdNotes(ad, isGroup)
     local t = {}
-    if ad.fresh then t[#t + 1] = "fresh run" end
-    if ad.reserved then t[#t + 1] = "items reserved" end
+    if ad.fresh then t[#t + 1] = L.NOTE_FRESH end
+    if ad.reserved then t[#t + 1] = L.NOTE_RESERVED end
     if ad.achievement or ad.achievementLinked then
-        t[#t + 1] = isGroup and "achievement asked for" or "achievement linked"
+        t[#t + 1] = isGroup and L.NOTE_ACHI_ASKED or L.NOTE_ACHI_LINKED
     end
     if ad.discord then t[#t + 1] = "Discord" end
     if ad.gdkp then t[#t + 1] = "GDKP" end
@@ -252,7 +273,7 @@ end
 
 function UI:HookBlizzard()
     if self.blizzButton or not LFRBrowseFrame then return end
-    local b = NewButton("RaidBrowserPlusOpenButton", LFRBrowseFrame, "Browser+", 70, 18)
+    local b = NewButton("RaidBrowserPlusOpenButton", LFRBrowseFrame, L.OPEN_BUTTON, 70, 18)
     if LFRBrowseFrameTitleText then
         b:SetPoint("LEFT", LFRBrowseFrameTitleText, "RIGHT", 12, 0)
     else
@@ -271,7 +292,7 @@ function UI:HookBlizzard()
         end
         UI:Show()
     end)
-    SetTip(b, "Raid Browser+", "Open the larger browser with an all-raids view, filters, specs, item levels and group composition.")
+    SetTip(b, "Raid Browser+", L.OPEN_BUTTON_TIP)
     self.blizzButton = b
 end
 
@@ -344,10 +365,10 @@ function UI:Create()
     local close = CreateFrame("Button", "RaidBrowserPlusCloseButton", f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -2, -2)
 
-    local options = NewButton("RaidBrowserPlusOptionsButton", f, "Options", 62, 18)
+    local options = NewButton("RaidBrowserPlusOptionsButton", f, L.OPTIONS_BUTTON, 62, 18)
     options:SetPoint("RIGHT", close, "LEFT", 2, 0)
     options:SetScript("OnClick", function() if RBP.Options then RBP.Options:Open() end end)
-    SetTip(options, "Options", "Settings in Interface > AddOns > Raid Browser+ (/rbp options).")
+    SetTip(options, L.OPTIONS_BUTTON, L.OPTIONS_BUTTON_TIP)
 
     local status = Text(f, "GameFontHighlightSmall")
     status:SetPoint("RIGHT", options, "LEFT", -6, 0)
@@ -402,12 +423,9 @@ function UI:CreateToolbar()
         if RBP.mode == "all" then
             local id = RBP:NextScanRaid()
             local loaded, total = RBP:ScanCoverage()
-            return format("Load %s (%d of %d raids loaded).\n\nThe client only allows one raid list request per click or key press, "
-                .. "so raids are loaded one at a time, starting with ones not loaded yet. Bind a key under Key Bindings -> Raid Browser+ "
-                .. "to step through them quickly. /rbp scope all includes older raids.",
-                id and RBP:RaidLabel(id) or "the next raid", loaded, total)
+            return format(L.NEXT_RAID_TIP, id and RBP:RaidLabel(id) or L.THE_NEXT_RAID, loaded, total)
         end
-        return "Ask the server for the full list again. Changes also arrive on their own, within a few seconds."
+        return L.REFRESH_TIP
     end)
     self.refresh = refresh
 
@@ -421,8 +439,8 @@ function UI:CreateToolbar()
     hint:SetPoint("LEFT", 2, 0)
     hint:SetPoint("RIGHT", -6, 0)
     hint:SetHeight(14)
-    hint:SetText("Search names, specs, comments")
-    SetTip(search, "Search", "Matches names, class, spec, comment, zone and raid, and the names of group members.")
+    hint:SetText(L.SEARCH_HINT)
+    SetTip(search, SEARCH or "Search", L.SEARCH_TIP)
     search:SetScript("OnTextChanged", function(box)
         local t = box:GetText() or ""
         RBP.db.filters.search = RBP.Lower(strtrim(t))
@@ -442,10 +460,7 @@ function UI:CreateToolbar()
         RBP.showHidden = not RBP.showHidden or nil
         RBP:RequestRefresh()
     end)
-    SetTip(hidden, "Hidden entries", "Entries you hid with right-click > Hide. A listing comes back on its own when it "
-        .. "is listed again or its comment changes; a chat ad when its text changes, or it expires and is posted again.\n\n"
-        .. "Click to show them (dimmed) or hide them again. Right-click one to show it again for good; /rbp hidden clear "
-        .. "brings them all back.")
+    SetTip(hidden, L.HIDDEN_TITLE, L.HIDDEN_TIP)
     hidden:Hide()
     self.hiddenButton = hidden
 end
@@ -454,10 +469,10 @@ function UI:UpdateHiddenButton()
     local b, n = self.hiddenButton, RBP.hiddenCount or 0
     if not b then return end
     if RBP.showHidden then
-        b:SetText(n > 0 and format("Hide %d again", n) or "Hide again")
+        FitButton(b, n > 0 and format(L.HIDE_N_AGAIN, n) or L.HIDE_AGAIN)
         b:Show()
     elseif n > 0 then
-        b:SetText(format("%d hidden", n))
+        FitButton(b, format(L.N_HIDDEN, n))
         b:Show()
     else
         b:Hide()
@@ -494,15 +509,13 @@ function UI:CreateFilters()
         return cb, fs
     end
 
-    local _, soloText = Check("RaidBrowserPlusShowSolo", "Players", "Show players listed on their own.", "solo")
-    local _, groupText = Check("RaidBrowserPlusShowGroups", "Groups", "Show listed groups.", "groups", soloText, 8)
-    local _, chatText = Check("RaidBrowserPlusShowChat", "Chat",
-        "Show raid ads read from chat: groups recruiting (LFM) and players looking for a raid, each with a chat icon. "
-        .. "Players and Groups apply to them too. Sources and expiry: /rbp chat.", "chat", groupText, 8)
+    local _, soloText = Check("RaidBrowserPlusShowSolo", L.FILTER_PLAYERS, L.FILTER_PLAYERS_TIP, "solo")
+    local _, groupText = Check("RaidBrowserPlusShowGroups", L.FILTER_GROUPS, L.FILTER_GROUPS_TIP, "groups", soloText, 8)
+    local _, chatText = Check("RaidBrowserPlusShowChat", L.FILTER_CHAT, L.FILTER_CHAT_TIP, "chat", groupText, 8)
 
     local rolesLabel = Text(f, "GameFontNormalSmall")
     rolesLabel:SetPoint("LEFT", chatText, "RIGHT", 18, 0)
-    rolesLabel:SetText("Roles:")
+    rolesLabel:SetText(L.FILTER_ROLES)
     self.roleButtons = {}
     local prev = rolesLabel
     for _, def in ipairs({ { "TANK", "tank", TANK or "Tank" }, { "HEALER", "healer", HEALER or "Healer" }, { "DAMAGER", "dps", DAMAGER or "Damage" } }) do
@@ -528,15 +541,14 @@ function UI:CreateFilters()
             UI:SyncFilters()
             RBP:RequestRefresh()
         end)
-        SetTip(b, label, "Only show players who listed this role, and groups that ask for it (in their comment or chat "
-            .. "ad); groups that don't say which roles they need stay. With no role selected, everyone is shown.")
+        SetTip(b, label, L.FILTER_ROLE_TIP)
         self.roleButtons[#self.roleButtons + 1] = b
         prev = b
     end
 
     local ilvlLabel = Text(f, "GameFontNormalSmall")
     ilvlLabel:SetPoint("LEFT", prev, "RIGHT", 16, 0)
-    ilvlLabel:SetText("Min iLvl:")
+    ilvlLabel:SetText(L.FILTER_MIN_ILVL)
     local ilvl = CreateFrame("EditBox", "RaidBrowserPlusMinIlvl", f, "InputBoxTemplate")
     ilvl:SetWidth(34)
     ilvl:SetHeight(18)
@@ -550,16 +562,12 @@ function UI:CreateFilters()
     end)
     ilvl:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
     ilvl:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
-    SetTip(ilvl, "Minimum item level", "Hides players (and groups by their average) below this item level. Entries without item level data are kept.")
+    SetTip(ilvl, L.FILTER_MIN_ILVL_TITLE, L.FILTER_MIN_ILVL_TIP)
     ReleaseFocusOnOutsideClick(ilvl)
     self.minIlvl = ilvl
 
-    local _, freshText = Check("RaidBrowserPlusFreshOnly", "No kills",
-        "Hide entries that already killed bosses on their current lockout of this raid.",
-        "freshOnly", ilvl, 10)
-    Check("RaidBrowserPlusAlert", "Alert on new",
-        "Play a sound and print new listings that pass your filters. While on, the addon keeps browsing after the window is closed.",
-        "alert", freshText, 10)
+    local _, freshText = Check("RaidBrowserPlusFreshOnly", L.FILTER_NO_KILLS, L.FILTER_NO_KILLS_TIP, "freshOnly", ilvl, 10)
+    Check("RaidBrowserPlusAlert", L.FILTER_ALERT, L.FILTER_ALERT_TIP, "alert", freshText, 10)
 end
 
 function UI:SyncFilters()
@@ -805,7 +813,7 @@ function UI:CreateDetails()
     d.whisper:SetPoint("BOTTOMLEFT", 10, 10)
     d.invite = NewButton("RaidBrowserPlusInviteButton", d, INVITE or "Invite", bw, 20)
     d.invite:SetPoint("LEFT", d.whisper, "RIGHT", 2, 0)
-    d.ask = NewButton("RaidBrowserPlusAskButton", d, "Ask to join", bw, 20)
+    d.ask = NewButton("RaidBrowserPlusAskButton", d, L.ASK_TO_JOIN, bw, 20)
     d.ask:SetPoint("LEFT", d.invite, "RIGHT", 2, 0)
     d.whisper:SetScript("OnClick", function() if UI.detailEntry then ChatFrame_SendTell(UI.detailEntry.name) end end)
     d.invite:SetScript("OnClick", function() if UI.detailEntry then InviteUnit(UI.detailEntry.name) end end)
@@ -815,8 +823,7 @@ function UI:CreateDetails()
         if not e then return nil end
         -- a link ends with |r, so the white is set again after it
         local msg = RBP:TemplateWhisper(e):gsub("|r", "|r|cffffffff")
-        return "Opens a whisper you can edit before sending:\n|cffffffff" .. msg
-            .. "|r\n\nChange it with /rbp template " .. (e.isGroup and "group" or "player") .. " <text>."
+        return format(L.ASK_TIP, "|cffffffff" .. msg .. "|r", e.isGroup and "group" or "player")
     end)
 
     -- Drag handle in the gap between the list and the details pane.
@@ -844,8 +851,8 @@ function UI:CreateDetails()
         s.grip:SetAlpha(0.9)
         if s.dragging then return end
         GameTooltip:SetOwner(s, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Resize details", 1, 1, 1)
-        GameTooltip:AddLine("Drag to widen or narrow the details pane. Double-click to reset.", 1, 0.82, 0, true)
+        GameTooltip:SetText(L.RESIZE_TITLE, 1, 1, 1)
+        GameTooltip:AddLine(L.RESIZE_TIP, 1, 0.82, 0, true)
         GameTooltip:Show()
     end)
     split:SetScript("OnLeave", function(s)
@@ -895,20 +902,20 @@ function UI:CreateFooter()
     foot:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -PAD - 14, 8)
     self.footer = foot
 
-    foot.signup = NewButton("RaidBrowserPlusSignUpButton", foot, "Sign up...", 84, 20)
+    foot.signup = NewButton("RaidBrowserPlusSignUpButton", foot, L.SIGN_UP, 84, 20)
     foot.signup:SetPoint("RIGHT", 0, 0)
     foot.signup:SetScript("OnClick", function()
         if LFRParentFrame and not LFRParentFrame:IsShown() and ToggleLFRParentFrame then ToggleLFRParentFrame() end
         if LFRFrame_SetActiveTab then LFRFrame_SetActiveTab(1) end
         if LFRParentFrame and LFRParentFrame.Raise then LFRParentFrame:Raise() end
     end)
-    SetTip(foot.signup, "Sign up", "Opens Blizzard's Choose Raid tab to list yourself or your group.")
+    SetTip(foot.signup, L.SIGN_UP_TITLE, L.SIGN_UP_TIP)
 
     foot.action = NewButton("RaidBrowserPlusUnlistButton", foot, UNLIST_ME or "Unlist", 96, 20)
     foot.action:SetPoint("RIGHT", foot.signup, "LEFT", -4, 0)
     foot.action:SetScript("OnClick", function() RBP:Unlist() end)
 
-    foot.set = NewButton("RaidBrowserPlusSetCommentButton", foot, "Set", 44, 20)
+    foot.set = NewButton("RaidBrowserPlusSetCommentButton", foot, L.SET, 44, 20)
     foot.set:SetPoint("RIGHT", foot.action, "LEFT", -4, 0)
 
     foot.comment = CreateFrame("EditBox", "RaidBrowserPlusCommentBox", foot, "InputBoxTemplate")
@@ -927,7 +934,7 @@ function UI:CreateFooter()
             if strtrim(text) == "" then LFRQueueFrameCommentExplanation:Show() else LFRQueueFrameCommentExplanation:Hide() end
         end
         foot.comment:ClearFocus()
-        RBP:Print("listing comment updated.")
+        RBP:Print(L.COMMENT_UPDATED)
     end
     foot.set:SetScript("OnClick", apply)
     foot.comment:SetScript("OnEnterPressed", function(box)
@@ -943,11 +950,11 @@ function UI:CreateFooter()
     foot.comment:SetScript("OnTextChanged", function(_, userInput)
         if userInput then foot.commentEdited = true end
     end)
-    SetTip(foot.set, "Set comment", "Updates the comment on your current listing (up to 64 characters).")
+    SetTip(foot.set, L.SET_COMMENT_TITLE, L.SET_COMMENT_TIP)
 
     foot.commentLabel = Text(foot, "GameFontNormalSmall")
     foot.commentLabel:SetPoint("RIGHT", foot.comment, "LEFT", -8, 0)
-    foot.commentLabel:SetText("Comment:")
+    foot.commentLabel:SetText(L.COMMENT_LABEL)
 
     -- your GearScore and item level (/rbp gs); a button so it can have a tooltip
     foot.gear = CreateFrame("Button", nil, foot)
@@ -955,13 +962,11 @@ function UI:CreateFooter()
     foot.gear:SetPoint("LEFT", 2, 0)
     foot.gear.text = Text(foot.gear, "GameFontHighlightSmall")
     foot.gear.text:SetPoint("LEFT", 0, 0)
-    SetTip(foot.gear, "Your gear", function()
+    SetTip(foot.gear, L.YOUR_GEAR, function()
         local _, source = RBP:PlayerGearScore()
-        local where = source == "addon" and "GearScore from your GearScore addon."
-            or "GearScore worked out with the GearScore addon's formula. With GearScore or GearScoreLite installed, its own number is used."
-        if source == "partial" then where = where .. " Some items aren't loaded yet, so it may be low for a moment." end
-        return where .. "\n\nItem level is counted the way the Raid Browser list counts it, so it matches what others see next to your name."
-            .. "\n\n|cffb0b0b0Hide with /rbp gs.|r"
+        local where = source == "addon" and L.GEAR_FROM_ADDON or L.GEAR_CALCULATED
+        if source == "partial" then where = where .. " " .. L.GEAR_PARTIAL end
+        return where .. "\n\n" .. L.GEAR_ILVL_NOTE .. "\n\n|cffb0b0b0" .. L.GEAR_HIDE .. "|r"
     end)
     foot.gear:Hide()
 
@@ -999,6 +1004,7 @@ function UI:Layout()
     d.whisper:SetWidth(bw)
     d.invite:SetWidth(bw)
     d.ask:SetWidth(bw)
+    for _, b in ipairs({ d.whisper, d.invite, d.ask }) do UI.ShrinkToFit(b) end
 
     self.list:ClearAllPoints()
     self.list:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, top)
@@ -1101,7 +1107,7 @@ function UI:Refresh()
     self:UpdateHiddenButton()
     self:UpdateDropdownText()
     self:SyncFilters()
-    self.refresh:SetText(RBP.mode == "all" and "Next raid" or (REFRESH or "Refresh"))
+    FitButton(self.refresh, RBP.mode == "all" and L.NEXT_RAID or (REFRESH or "Refresh"))
 end
 
 function UI:UpdateHeaders()
@@ -1149,23 +1155,22 @@ function UI:UpdateRows()
     local msg
     if #view == 0 then
         if #RBP.raidOrder == 0 then
-            msg = "No raid data from the client yet. Try again in a moment."
+            msg = L.EMPTY_NO_DATA
         elseif RBP.mode == "single" and not RBP.currentRaid then
-            msg = "Pick a raid from the dropdown, or choose All raids."
+            msg = L.EMPTY_PICK
         elseif (self.totalCount or 0) > 0 then
-            msg = format("%d listing%s hidden by your filters.", self.totalCount, self.totalCount == 1 and " is" or "s are")
+            msg = format(RBP.Plural(self.totalCount, "EMPTY_FILTERED"), self.totalCount)
         elseif RBP.pendingJoin then
-            msg = "Waiting for the server..."
+            msg = L.EMPTY_WAITING
         elseif RBP.mode == "all" then
             local loaded, total = RBP:ScanCoverage()
             if loaded < total then
-                msg = format("Nobody is listed in the %d raid%s loaded so far (of %d).\nClick Next raid to load another.",
-                    loaded, loaded == 1 and "" or "s", total)
+                msg = format(RBP.Plural(loaded, "EMPTY_NONE_LOADED"), loaded, total)
             else
-                msg = "Nobody is listed in any raid."
+                msg = L.EMPTY_NONE_ANY
             end
         else
-            msg = "Nobody is listed for this raid."
+            msg = L.EMPTY_NONE
         end
     end
     if msg then
@@ -1210,7 +1215,7 @@ function UI:SetRow(row, e)
     end
     if e.isGroup then
         local size = e.maxPlayers > 0 and format("%d/%d", e.size or 1, e.maxPlayers) or tostring(e.size or 1)
-        cells.class:SetText(Col("ffd100", "Group ") .. Col("ffffff", size))
+        cells.class:SetText(Col("ffd100", L.ROW_GROUP) .. Col("ffffff", size))
     else
         cells.class:SetText(Col(dim and C.dim or RBP:ClassColor(e.class), SpecText(e)))
     end
@@ -1264,13 +1269,13 @@ function UI:SetChatRow(row, e)
         row.classIcon:Hide()
     end
     if e.isGroup then
-        cells.class:SetText(Col("ffd100", "LFM") .. (ad.fill and ("  " .. Col("ffffff", ad.fill)) or ""))
+        cells.class:SetText(Col("ffd100", L.ROW_LFM) .. (ad.fill and ("  " .. Col("ffffff", ad.fill)) or ""))
     else
-        cells.class:SetText(Col(dim and C.dim or RBP:ClassColor(e.class), e.className ~= "" and e.className or "LF raid"))
+        cells.class:SetText(Col(dim and C.dim or RBP:ClassColor(e.class), e.className ~= "" and e.className or L.ROW_LF_RAID))
     end
     for _, t in pairs(row.roleTex) do t:Hide() end
     if ad.anyRole then
-        cells.roles:SetText(Col(C.dim, "any"))
+        cells.roles:SetText(Col(C.dim, L.ROW_ANY))
     else
         cells.roles:SetText("")
         local texture = dim and "Interface\\LFGFrame\\LFGRole_BW" or "Interface\\LFGFrame\\LFGRole"
@@ -1293,13 +1298,13 @@ function UI:ShowChatTooltip(owner, e)
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT", 0, -ROW_H)
     local ad = e.ad
     GameTooltip:AddLine(Col(RBP:ClassColor(e.class), e.name) .. "  " .. RBP.CHAT_ICON_TEXT)
-    GameTooltip:AddLine(format("%s in %s, %s ago", e.isGroup and "Recruiting" or "Looking for a raid",
-        e.area or "chat", Ago(floor(GetTime() - e.seen))), 1, 0.82, 0)
+    GameTooltip:AddLine(format(e.isGroup and L.TIP_RECRUITING_IN or L.TIP_LOOKING_IN,
+        e.area or L.CHAT_SOURCE, AgoText(floor(GetTime() - e.seen))), 1, 0.82, 0)
     GameTooltip:AddLine(table.concat(e.raidLabels, ", "), 0.7, 0.7, 0.7)
-    GameTooltip:AddLine((e.isGroup and "Needs: " or "Plays: ") .. AdRolesText(ad), 1, 1, 1)
-    if ad.gs then GameTooltip:AddLine("GearScore " .. GSText(ad.gs) .. (e.isGroup and "+" or ""), 1, 1, 1) end
+    GameTooltip:AddLine(format(e.isGroup and L.TIP_NEEDS or L.TIP_PLAYS, AdRolesText(ad)), 1, 1, 1)
+    if ad.gs then GameTooltip:AddLine(format(L.TIP_GEARSCORE, GSText(ad.gs) .. (e.isGroup and "+" or "")), 1, 1, 1) end
     local contact = RBP:Contact(e.name)
-    if contact then GameTooltip:AddLine(ContactText(contact, function(s) return Ago(s) .. " ago" end), 0.6, 0.8, 1) end
+    if contact then GameTooltip:AddLine(ContactText(contact, AgoText), 0.6, 0.8, 1) end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(e.comment, 1, 1, 1, true)
     GameTooltip:Show()
@@ -1311,19 +1316,19 @@ function UI:ShowEntryTooltip(owner, e)
     local cc = RBP:ClassColor(e.class)
     GameTooltip:AddLine(Col(cc, e.name) .. (e.isGroup and ("  " .. RBP.ROLE_ICON.LEADER) or ""))
     if e.isGroup then
-        GameTooltip:AddLine(format("Group %d/%d  -  leader: %s", e.size or 1, e.maxPlayers or 0, SpecText(e)), 1, 0.82, 0)
+        GameTooltip:AddLine(format(L.TIP_GROUP, e.size or 1, e.maxPlayers or 0, SpecText(e)), 1, 0.82, 0)
         GameTooltip:AddLine(CompText(e.comp, true))
         local asks = e.asks
         if asks and (not asks.anyRole or asks.gs) then
             local t = {}
             if not asks.anyRole then t[#t + 1] = AdRolesText(asks) end
-            if asks.gs then t[#t + 1] = GSText(asks.gs) .. "+ GearScore" end
-            GameTooltip:AddLine("Asks for: " .. table.concat(t, ", "), 1, 1, 1)
+            if asks.gs then t[#t + 1] = format(L.TIP_GS_ASKED, GSText(asks.gs)) end
+            GameTooltip:AddLine(format(L.TIP_ASKS_FOR, table.concat(t, ", ")), 1, 1, 1)
         end
-        if e.ilvl then GameTooltip:AddLine("Average item level " .. FmtIlvl(e.ilvl), 1, 1, 1) end
+        if e.ilvl then GameTooltip:AddLine(format(L.TIP_AVG_ILVL, FmtIlvl(e.ilvl)), 1, 1, 1) end
     else
-        GameTooltip:AddLine(format("Level %d %s%s", e.level, SpecText(e), e.talentString and ("  (" .. e.talentString .. ")") or ""), 1, 1, 1)
-        if e.ilvl then GameTooltip:AddLine("Item level " .. FmtIlvl(e.ilvl), 1, 1, 1) end
+        GameTooltip:AddLine(format(L.TIP_LEVEL, e.level, SpecText(e), e.talentString and ("  (" .. e.talentString .. ")") or ""), 1, 1, 1)
+        if e.ilvl then GameTooltip:AddLine(format(L.TIP_ILVL, FmtIlvl(e.ilvl)), 1, 1, 1) end
     end
     local listAge = RBP:ListAge(e.raidId)
     local live = SearchLFGGetJoinedID and SearchLFGGetJoinedID() == e.raidId
@@ -1334,7 +1339,7 @@ function UI:ShowEntryTooltip(owner, e)
         end
     else
         GameTooltip:AddLine(RBP:RaidLabel(e.raidId) .. ((RBP.mode == "all" and listAge and not live)
-            and format("  (list from %s ago)", Ago(listAge)) or ""), 0.7, 0.7, 0.7)
+            and format(L.TIP_LIST_FROM, AgoText(listAge)) or ""), 0.7, 0.7, 0.7)
     end
     if e.comment and e.comment ~= "" then
         GameTooltip:AddLine(" ")
@@ -1350,9 +1355,9 @@ function UI:ShowEntryTooltip(owner, e)
     end
     local contact = RBP:Contact(e.name)
     if contact or IsNew(e) then GameTooltip:AddLine(" ") end
-    if contact then GameTooltip:AddLine(ContactText(contact, function(s) return Ago(s) .. " ago" end), 0.6, 0.8, 1) end
+    if contact then GameTooltip:AddLine(ContactText(contact, AgoText), 0.6, 0.8, 1) end
     if IsNew(e) then
-        GameTooltip:AddLine(format("First seen %s ago", Ago(GetTime() - e.firstSeen)), 0.25, 1, 0.45)
+        GameTooltip:AddLine(format(L.TIP_FIRST_SEEN, AgoText(GetTime() - e.firstSeen)), 0.25, 1, 0.45)
     end
     GameTooltip:Show()
 end
@@ -1362,14 +1367,14 @@ function UI:OpenMenu(e)
         { text = e.name, isTitle = true, notCheckable = true },
         { text = WHISPER or "Whisper", notCheckable = true, disabled = e.isSelf, func = function() ChatFrame_SendTell(e.name) end },
         { text = INVITE or "Invite", notCheckable = true, disabled = not CanInvite(e), func = function() InviteUnit(e.name) end },
-        { text = e.isGroup and "Ask to join..." or "Recruit...", notCheckable = true, disabled = e.isSelf,
+        { text = e.isGroup and L.MENU_ASK or L.MENU_RECRUIT, notCheckable = true, disabled = e.isSelf,
           func = function() RBP:OpenTemplateWhisper(e) end },
         { text = ADD_FRIEND or "Add Friend", notCheckable = true, disabled = e.isSelf or e.relation == "friend",
           func = function() AddFriend(e.name) end },
         { text = WHO or "Who", notCheckable = true, func = function() SendWho('n-"' .. e.name .. '"') end },
         RBP:IsHidden(e)
-            and { text = "Show again", notCheckable = true, func = function() RBP:UnhideEntry(e) end }
-            or { text = e.isChat and "Hide until the ad changes" or "Hide until relisted", notCheckable = true,
+            and { text = L.MENU_SHOW_AGAIN, notCheckable = true, func = function() RBP:UnhideEntry(e) end }
+            or { text = e.isChat and L.MENU_HIDE_AD or L.MENU_HIDE_LISTING, notCheckable = true,
                  func = function() RBP:HideEntry(e) end },
         { text = CANCEL or "Cancel", notCheckable = true, func = function() CloseDropDownMenus() end },
     }
@@ -1446,52 +1451,52 @@ local function StatItems(e, showAll)
     local items = {}
     local function item(label, value, full) items[#items + 1] = { label = label, value = value, full = full } end
 
-    item("Health", Val(s.maxHealth))
-    item(RBP.POWER_LABEL[e.class or ""] or "Mana", Val(s.maxPower))
-    item("Armor", Val(s.armor))
+    item(L.STAT_HEALTH, Val(s.maxHealth))
+    item(RBP.POWER_LABEL[e.class or ""] or MANA or L.STAT_MANA, Val(s.maxPower))
+    item(L.STAT_ARMOR, Val(s.armor))
     if phys then
-        item("Agility", Val(s.agility))
-        item("Attack power", Val(s.attackPower))
+        item(L.STAT_AGILITY, Val(s.agility))
+        item(L.STAT_AP, Val(s.attackPower))
     end
     if spell then
-        item("Spell power", Val(s.spellDamage))
-        if showAll or (tonumber(s.spellHeal) or 0) ~= (tonumber(s.spellDamage) or 0) then item("Bonus healing", Val(s.spellHeal)) end
+        item(L.STAT_SPELL_POWER, Val(s.spellDamage))
+        if showAll or (tonumber(s.spellHeal) or 0) ~= (tonumber(s.spellDamage) or 0) then item(L.STAT_HEALING, Val(s.spellHeal)) end
     end
     local cm, cr, cs = tonumber(s.critMelee) or 0, tonumber(s.critRanged) or 0, tonumber(s.critSpell) or 0
     if cm == cr and cr == cs then
-        item("Crit rating", Val(cm))
+        item(L.STAT_CRIT, Val(cm))
     elseif showAll then
-        item("Melee crit", Val(cm))
-        item("Ranged crit", Val(cr))
-        item("Spell crit", Val(cs))
+        item(L.STAT_CRIT_MELEE, Val(cm))
+        item(L.STAT_CRIT_RANGED, Val(cr))
+        item(L.STAT_CRIT_SPELL, Val(cs))
     else
         if phys then
-            if e.class == "HUNTER" then item("Ranged crit", Val(cr)) else item("Melee crit", Val(cm)) end
+            if e.class == "HUNTER" then item(L.STAT_CRIT_RANGED, Val(cr)) else item(L.STAT_CRIT_MELEE, Val(cm)) end
         end
-        if spell then item("Spell crit", Val(cs)) end
+        if spell then item(L.STAT_CRIT_SPELL, Val(cs)) end
     end
-    item("Haste rating", Val(s.haste))
-    if phys and (showAll or e.class ~= "HUNTER") then item("Expertise", Val(s.expertise)) end
+    item(L.STAT_HASTE, Val(s.haste))
+    if phys and (showAll or e.class ~= "HUNTER") then item(L.STAT_EXPERTISE, Val(s.expertise)) end
     if spell then
-        item("MP5", Val(s.mp5))
-        item("MP5 casting", Val(s.mp5Combat))
+        item(L.STAT_MP5, Val(s.mp5))
+        item(L.STAT_MP5_CASTING, Val(s.mp5Combat))
     end
     if def then
         local raw = tonumber(s.defenseRating) or 0
         local v = Val(raw)
         if e.defenseBonus and raw > 0 then
-            v = v .. Col(C.dim, format("  (+%d defense)", floor(e.defenseBonus)))
+            v = v .. Col(C.dim, format(L.STAT_DEFENSE_BONUS, floor(e.defenseBonus)))
         end
-        item("Defense rating", v, true)
+        item(L.STAT_DEFENSE, v, true)
         -- Druids reach crit immunity through talents, so defense says nothing for them.
         if e.class ~= "DRUID" and e.defenseBonus and raw > 0 then
             local short = RBP.UNCRITTABLE_BONUS - e.defenseBonus
-            item("Crit-immune", short <= 0 and Col(C.good, "yes")
-                or Col(C.dim, format("no, %d defense short", math.ceil(short))), true)
+            item(L.STAT_CRIT_IMMUNE, short <= 0 and Col(C.good, L.YES)
+                or Col(C.dim, format(L.STAT_DEFENSE_SHORT, math.ceil(short))), true)
         end
-        item("Dodge", Val(s.dodge))
-        item("Parry", Val(s.parry))
-        if showAll or SHIELD_CLASS[e.class or ""] then item("Block", Val(s.block)) end
+        item(L.STAT_DODGE, Val(s.dodge))
+        item(L.STAT_PARRY, Val(s.parry))
+        if showAll or SHIELD_CLASS[e.class or ""] then item(L.STAT_BLOCK, Val(s.block)) end
     end
     return items
 end
@@ -1525,62 +1530,62 @@ function UI:DetailBlocks(e)
     local contact = RBP:Contact(e.name)
     if e.isChat then
         local ad = e.ad
-        row("Raid", table.concat(e.raidLabels, ", "))
+        row(L.D_RAID, table.concat(e.raidLabels, ", "))
         local saved = LockoutText(e.raidIds)
-        if saved then row("Your lockout", saved) end
-        row(e.isGroup and "Needs" or "Plays", AdRolesText(ad))
-        if ad.gs then row(e.isGroup and "GearScore asked" or "GearScore", GSText(ad.gs) .. (e.isGroup and "+" or "")) end
-        if ad.fill then row("Members", ad.fill) end
-        if ad.progress then row("Progress", Col(C.warn, ad.progress)) end
+        if saved then row(L.D_LOCKOUT, saved) end
+        row(e.isGroup and L.D_NEEDS or L.D_PLAYS, AdRolesText(ad))
+        if ad.gs then row(e.isGroup and L.D_GS_ASKED or L.D_GS, GSText(ad.gs) .. (e.isGroup and "+" or "")) end
+        if ad.fill then row(L.D_MEMBERS, ad.fill) end
+        if ad.progress then row(L.D_PROGRESS, Col(C.warn, ad.progress)) end
         local notes = AdNotes(ad, e.isGroup)
-        if #notes > 0 then row("Notes", table.concat(notes, ", ")) end
-        if contact then row("Whispers", ContactText(contact, AgoMinutes)) end
-        row("Seen", format("%s in %s", AgoMinutes(now - floor(e.seen)), e.area or "chat"))
-        if e.posts > 1 then row("Posted", format("%d times, first %s", e.posts, AgoMinutes(now - floor(e.firstSeen)))) end
-        header("Ad", "comment")
+        if #notes > 0 then row(L.D_NOTES, table.concat(notes, ", ")) end
+        if contact then row(L.D_WHISPERS, ContactText(contact, AgoMinutes)) end
+        row(L.D_SEEN, format(L.D_SEEN_IN, AgoMinutes(now - floor(e.seen)), e.area or L.CHAT_SOURCE))
+        if e.posts > 1 then row(L.D_POSTED, format(RBP.Plural(e.posts, "D_POSTED_TIMES"), e.posts, AgoMinutes(now - floor(e.firstSeen)))) end
+        header(L.D_AD, "comment")
         text(e.comment)
-        text(Col(C.dim, "Raid, roles and GearScore above are read from the message, so check the ad itself."))
+        text(Col(C.dim, L.D_AD_NOTE))
         return B
     end
 
-    if not e.multi then row("Raid", RBP:RaidLabel(e.raidId)) end
+    if not e.multi then row(L.D_RAID, RBP:RaidLabel(e.raidId)) end
     local lockIds = { e.raidId }
     if e.multi then
         lockIds = {}
         for _, p in ipairs(e.parts) do lockIds[#lockIds + 1] = p.raidId end
     end
     local saved = LockoutText(lockIds)
-    if saved then row("Your lockout", saved) end
+    if saved then row(L.D_LOCKOUT, saved) end
     if e.isGroup then
-        row("Members", format("%d/%d", e.size or 1, e.maxPlayers or 0))
-        row("Composition", CompText(e.comp, true))
+        row(L.D_MEMBERS, format("%d/%d", e.size or 1, e.maxPlayers or 0))
+        row(L.D_COMPOSITION, CompText(e.comp, true))
         local asks = e.asks
-        if asks and not asks.anyRole then row("Asks for", AdRolesText(asks)) end
-        if asks and asks.gs then row("GearScore asked", GSText(asks.gs) .. "+") end
-        if e.ilvl then row("Average item level", Col(RBP.ItemLevelColor(e.ilvl), FmtIlvl(e.ilvl))) end
+        if asks and not asks.anyRole then row(L.D_ASKS_FOR, AdRolesText(asks)) end
+        if asks and asks.gs then row(L.D_GS_ASKED, GSText(asks.gs) .. "+") end
+        if e.ilvl then row(L.D_AVG_ILVL, Col(RBP.ItemLevelColor(e.ilvl), FmtIlvl(e.ilvl))) end
     else
         local roles = {}
-        if e.isTank then roles[#roles + 1] = RBP.ROLE_ICON.TANK .. " Tank" end
-        if e.isHealer then roles[#roles + 1] = RBP.ROLE_ICON.HEALER .. " Healer" end
-        if e.isDamage then roles[#roles + 1] = RBP.ROLE_ICON.DAMAGER .. " Damage" end
-        row("Listed as", #roles > 0 and table.concat(roles, "  ") or Col(C.dim, "no role"))
-        if e.ilvl then row("Item level", Col(RBP.ItemLevelColor(e.ilvl), FmtIlvl(e.ilvl))) end
+        if e.isTank then roles[#roles + 1] = RBP.ROLE_ICON.TANK .. " " .. (TANK or "Tank") end
+        if e.isHealer then roles[#roles + 1] = RBP.ROLE_ICON.HEALER .. " " .. (HEALER or "Healer") end
+        if e.isDamage then roles[#roles + 1] = RBP.ROLE_ICON.DAMAGER .. " " .. (DAMAGER or "Damage") end
+        row(L.D_LISTED_AS, #roles > 0 and table.concat(roles, "  ") or Col(C.dim, L.D_NO_ROLE))
+        if e.ilvl then row(L.D_ILVL, Col(RBP.ItemLevelColor(e.ilvl), FmtIlvl(e.ilvl))) end
     end
     if not e.isGroup and e.area and e.area ~= "" then row(ZONE or "Zone", e.area) end
-    if contact then row("Whispers", ContactText(contact, AgoMinutes)) end
+    if contact then row(L.D_WHISPERS, ContactText(contact, AgoMinutes)) end
     if e.initial then
-        row("First seen", Col(C.dim, "when you started browsing"))
+        row(L.D_FIRST_SEEN, Col(C.dim, L.D_WHEN_STARTED))
     elseif e.firstSeen then
-        row("First seen", AgoMinutes(GetTime() - e.firstSeen))
+        row(L.D_FIRST_SEEN, AgoMinutes(GetTime() - e.firstSeen))
     end
 
     if e.comment and e.comment ~= "" then
-        header("Comment", "comment")
+        header(L.D_COMMENT, "comment")
         text(e.comment)
     end
 
     if e.multi then
-        header(format("Listed for  %d raids", #e.parts), "raids")
+        header(format(RBP.Plural(#e.parts, "D_LISTED_FOR"), #e.parts), "raids")
         for _, p in ipairs(e.parts) do
             local prog = (p.encTotal or 0) > 0
                 and Col((p.encDone or 0) > 0 and C.warn or C.good, format("%d/%d", p.encDone or 0, p.encTotal)) or Col(C.dim, "-")
@@ -1595,21 +1600,20 @@ function UI:DetailBlocks(e)
             end
         end
     elseif (e.encTotal or 0) > 0 then
-        header(format("Bosses killed  %d/%d", e.encDone or 0, e.encTotal), "bosses")
+        header(format(L.D_BOSSES_KILLED, e.encDone or 0, e.encTotal), "bosses")
         if (e.encDone or 0) > 0 then
             for _, b in ipairs(e.bosses or {}) do
                 row(b.name, b.killed and Col(C.bad, BOSS_DEAD or "Killed") or Col(C.good, BOSS_ALIVE or "Alive"), { plain = true })
             end
         else
-            text(Col(C.good, "No bosses killed on this lockout"))
+            text(Col(C.good, L.D_NO_BOSSES))
         end
     end
 
     local showAll = RBP.db.showAllStats
     local showAllLink = {
-        label = showAll and "show relevant" or "show all",
-        tip = showAll and "Only show the stats that matter for each class and spec."
-            or "Show every stat the server sends, including ones that don't apply to the class or spec (for example MP5 on a death knight).",
+        label = showAll and L.D_SHOW_RELEVANT or L.D_SHOW_ALL,
+        tip = showAll and L.D_SHOW_RELEVANT_TIP or L.D_SHOW_ALL_TIP,
         onClick = function() RBP:SetShowAllStats(not RBP.db.showAllStats) end,
     }
 
@@ -1618,7 +1622,7 @@ function UI:DetailBlocks(e)
     if not e.isGroup then
         local items = StatItems(e, showAll)
         if items then
-            header("Stats", "stats", { showAllLink })
+            header(L.D_STATS, "stats", { showAllLink })
             if not skip then B[#B + 1] = { kind = "grid", items = items } end
         end
     end
@@ -1630,11 +1634,11 @@ function UI:DetailBlocks(e)
         for _, m in ipairs(roster) do
             if not self:IsExpanded(m) then anyClosed = true end
         end
-        header(format("Roster  %d", e.size or #e.roster), "roster", {
+        header(format(L.D_ROSTER, e.size or #e.roster), "roster", {
             showAllLink,
             {
-                label = anyClosed and "expand all" or "collapse all",
-                tip = "Show or hide everyone's stats. Click a name to expand just them.",
+                label = anyClosed and L.D_EXPAND_ALL or L.D_COLLAPSE_ALL,
+                tip = L.D_EXPAND_TIP,
                 onClick = function() UI:SetMembersExpanded(UI.detailEntry or e, anyClosed) end,
             },
         })
@@ -1649,17 +1653,17 @@ function UI:DetailBlocks(e)
             local tags = {}
             if m.isRosterLeader then tags[#tags + 1] = RBP.ROLE_ICON.LEADER end
             local rel = m.relationship or RBP:Relation(m.name)
-            if rel == "friend" then tags[#tags + 1] = Col(C.good, "friend")
-            elseif rel == "guild" then tags[#tags + 1] = Col("40c8ff", "guild")
-            elseif rel == "ignored" then tags[#tags + 1] = Col(C.bad, "ignored")
-            elseif rel == "self" then tags[#tags + 1] = Col(C.dim, "you") end
+            if rel == "friend" then tags[#tags + 1] = Col(C.good, L.TAG_FRIEND)
+            elseif rel == "guild" then tags[#tags + 1] = Col("40c8ff", L.TAG_GUILD)
+            elseif rel == "ignored" then tags[#tags + 1] = Col(C.bad, L.TAG_IGNORED)
+            elseif rel == "self" then tags[#tags + 1] = Col(C.dim, L.TAG_YOU) end
             local left = format("%s %s %s  %s", icon, RBP:ClassIcon(m.class, 12), Col(RBP:ClassColor(m.class), m.name),
                 Col(C.dim, SpecText(m)))
-            if (m.level or 0) > 0 and m.level < (e.level or 80) then left = left .. Col(C.warn, " L" .. m.level) end
+            if (m.level or 0) > 0 and m.level < (e.level or 80) then left = left .. Col(C.warn, format(L.LEVEL_SHORT, m.level)) end
             if #tags > 0 then left = left .. "  " .. table.concat(tags, " ") end
             local isLeader = m.isRosterLeader
             local hasStats = m.stats and (tonumber(m.stats.maxHealth) or 0) > 0
-            if not hasStats then left = left .. "  " .. Col(C.dim, "no stats") end
+            if not hasStats then left = left .. "  " .. Col(C.dim, L.D_NO_STATS) end
             local il -- the group entry's own ilvl is the group average
             if isLeader then il = m.leaderIlvl else il = m.ilvl end
             local open = self:IsExpanded(m)
@@ -1675,21 +1679,21 @@ function UI:DetailBlocks(e)
                     B[#B + 1] = { kind = "grid", items = items, indent = MEMBER_INDENT }
                 else
                     B[#B + 1] = { kind = "text", indent = MEMBER_INDENT,
-                        text = Col(C.dim, "No stats sent: offline since the group was listed.") }
+                        text = Col(C.dim, L.D_OFFLINE_NO_STATS) }
                 end
                 B[#B + 1] = { kind = "gap", height = 4 }
             end
         end
         local missing = (e.size or 0) - #e.roster
         if missing > 0 then
-            text(Col(C.dim, format("+%d member%s not returned by the client", missing, missing == 1 and "" or "s")))
+            text(Col(C.dim, format(RBP.Plural(missing, "D_MISSING"), missing)))
         end
     end
     if e.chatAd then
         local c = e.chatAd
-        header("Also in chat", "chatad")
+        header(L.D_ALSO_IN_CHAT, "chatad")
         text(c.comment)
-        row("Seen", format("%s in %s", AgoMinutes(now - floor(c.seen)), c.area or "chat"))
+        row(L.D_SEEN, format(L.D_SEEN_IN, AgoMinutes(now - floor(c.seen)), c.area or L.CHAT_SOURCE))
     end
     return B
 end
@@ -2050,8 +2054,8 @@ function UI:UpdateDetails()
     local e = self:FindSelected()
     if not e then
         self.detailEntry = nil
-        d.title:SetText(Col(C.dim, "No selection"))
-        d.sub:SetText(Col(C.dim, "Click a row for details. Double-click to whisper, right-click for actions."))
+        d.title:SetText(Col(C.dim, L.NO_SELECTION))
+        d.sub:SetText(Col(C.dim, L.NO_SELECTION_HINT))
         self:RenderBlocksIfChanged({})
         d.whisper:Disable(); d.invite:Disable(); d.ask:Disable()
         return
@@ -2060,17 +2064,17 @@ function UI:UpdateDetails()
     local cc = RBP:ClassColor(e.class)
     if e.isChat then
         d.title:SetText(Col(cc, e.name) .. " " .. RBP.CHAT_ICON_TEXT)
-        d.sub:SetText(e.isGroup and format("Recruiting in %s", e.area or "chat")
-            or format("%s looking for a raid in %s", e.className ~= "" and e.className or "Player", e.area or "chat"))
+        d.sub:SetText(e.isGroup and format(L.SUB_RECRUITING, e.area or L.CHAT_SOURCE)
+            or format(L.SUB_LOOKING, e.className ~= "" and e.className or L.PLAYER, e.area or L.CHAT_SOURCE))
     else
         d.title:SetText(Col(cc, e.name) .. (e.isGroup and (" " .. RBP.ROLE_ICON.LEADER) or ""))
     end
     if e.isChat then
         -- set above
     elseif e.isGroup then
-        d.sub:SetText(format("Group led by a level %d %s", e.level, SpecText(e)))
+        d.sub:SetText(format(L.SUB_GROUP_LED, e.level, SpecText(e)))
     else
-        d.sub:SetText(format("Level %d %s%s", e.level, SpecText(e), e.talentString and ("  " .. Col(C.dim, e.talentString)) or ""))
+        d.sub:SetText(format(L.TIP_LEVEL, e.level, SpecText(e), e.talentString and ("  " .. Col(C.dim, e.talentString)) or ""))
     end
     self:RenderBlocksIfChanged(self:DetailBlocks(e))
     if self.detailScrollReset then
@@ -2079,7 +2083,8 @@ function UI:UpdateDetails()
     end
     if e.isSelf then d.whisper:Disable() else d.whisper:Enable() end
     if CanInvite(e) then d.invite:Enable() else d.invite:Disable() end
-    d.ask:SetText(e.isGroup and "Ask to join" or "Recruit")
+    d.ask:SetText(e.isGroup and L.ASK_TO_JOIN or L.RECRUIT)
+    UI.ShrinkToFit(d.ask)
     if e.isSelf then d.ask:Disable() else d.ask:Enable() end
 end
 
@@ -2091,16 +2096,16 @@ function UI:UpdateBanner()
     local listedNow = GetLFGMode and GetLFGMode() == "listed"
     if stale and not listedNow then
         self:SetBanner("warn",
-            format("The server still lists you in %s, but your client lost the listed state (UI reload or zoning).", RBP:RaidLabel(stale.raidId)),
-            "Restore", function() RBP:RestoreListing() end,
+            format(L.BANNER_STALE, RBP:RaidLabel(stale.raidId)),
+            L.RESTORE, function() RBP:RestoreListing() end,
             UNLIST_ME or "Unlist", function() RBP:Unlist() end)
     elseif RBP.noResponse then
         self:SetBanner("bad",
-            format("No reply from the server for %s. The Raid Browser may be disabled on this realm, or the server is busy.", RBP:RaidLabel(RBP.noResponse.raidId)),
-            "Retry", function() RBP:RetryNoResponse() end)
+            format(L.BANNER_NO_REPLY, RBP:RaidLabel(RBP.noResponse.raidId)),
+            L.RETRY, function() RBP:RetryNoResponse() end)
     elseif RBP.groupListedBy and not listedNow then
         self:SetBanner("info",
-            format("Your group is listed in %s by %s.", RBP:RaidLabel(RBP.groupListedBy.raidId), RBP.groupListedBy.leader))
+            format(L.BANNER_GROUP_LISTED, RBP:RaidLabel(RBP.groupListedBy.raidId), RBP.groupListedBy.leader))
     else
         self:SetBanner(nil)
     end
@@ -2111,8 +2116,8 @@ function UI:UpdateFooter()
     local showGear = RBP.db.showGearScore
     if showGear then
         local gs = RBP:PlayerGearScore()
-        foot.gear.text:SetText(format("%s %s   %s %s", Col(C.dim, "GS"), Col(RBP.GearScoreColor(gs), Num(gs)),
-            Col(C.dim, "iLvl"), format("%d", floor(RBP:PlayerItemLevel()))))
+        foot.gear.text:SetText(format("%s %s   %s %s", Col(C.dim, L.GEAR_GS), Col(RBP.GearScoreColor(gs), Num(gs)),
+            Col(C.dim, L.COL_ILVL), format("%d", floor(RBP:PlayerItemLevel()))))
         foot.gear:SetWidth(floor((foot.gear.text:GetStringWidth() or 80) + 2))
     end
     if showGear ~= (foot.gear:IsShown() and true or false) then -- IsShown gives 1/nil
@@ -2127,18 +2132,18 @@ function UI:UpdateFooter()
             if i > 3 then names[#names + 1] = format("+%d", #raids - 3); break end
             names[#names + 1] = RBP:RaidShort(id)
         end
-        foot.state:SetText(Col(C.good, "Listed") .. (#names > 0 and (": " .. table.concat(names, ", ")) or ""))
-        foot.action:SetText(inGroup and (UNLIST_MY_GROUP or "Unlist group") or (UNLIST_ME or "Unlist"))
+        foot.state:SetText(Col(C.good, L.LISTED) .. (#names > 0 and (": " .. table.concat(names, ", ")) or ""))
+        foot.action:SetText(inGroup and (UNLIST_MY_GROUP or L.UNLIST_GROUP) or (UNLIST_ME or "Unlist"))
         foot.action:SetWidth(max(80, foot.action:GetTextWidth() + 24))
         foot.action:Show()
         if empowered then foot.action:Enable(); foot.set:Enable() else foot.action:Disable(); foot.set:Disable() end
         if not foot.comment:HasFocus() and not foot.commentEdited then foot.comment:SetText(comment or "") end
     elseif RBP.staleListing then
-        foot.state:SetText(Col(C.warn, "Listed (client out of sync)"))
+        foot.state:SetText(Col(C.warn, L.LISTED_OUT_OF_SYNC))
         foot.action:Hide()
         foot.set:Enable()
     else
-        foot.state:SetText(Col(C.dim, "You are not listed"))
+        foot.state:SetText(Col(C.dim, L.NOT_LISTED))
         foot.action:Hide()
         foot.set:Disable()
     end
@@ -2148,24 +2153,24 @@ function UI:StatusText()
     local now = GetTime()
     local shown = self.viewList and #self.viewList or 0
     local total = self.totalCount or 0
-    local suffix = (shown ~= total) and format("  |cff8a8a8a(%d shown)|r", shown) or ""
+    local suffix = (shown ~= total) and ("  |cff8a8a8a" .. format(L.STATUS_SHOWN, shown) .. "|r") or ""
+    local listings = format(RBP.Plural(total, "STATUS_LISTINGS"), total)
     if RBP.mode == "all" then
         local loaded, n = RBP:ScanCoverage()
-        local loading = RBP.pendingJoin and ("  -  loading " .. RBP:RaidShort(RBP.pendingJoin)) or ""
-        local chat = (RBP.chatCount or 0) > 0 and format(" (%d from chat)", RBP.chatCount) or ""
-        return format("%d listing%s%s  -  %d/%d raids loaded%s%s", total, total == 1 and "" or "s", chat,
-            loaded, n, loading, suffix)
+        local loading = RBP.pendingJoin and ("  -  " .. format(L.STATUS_LOADING, RBP:RaidShort(RBP.pendingJoin))) or ""
+        local chat = (RBP.chatCount or 0) > 0 and format(L.STATUS_FROM_CHAT_ALL, RBP.chatCount) or ""
+        return listings .. chat .. "  -  " .. format(L.STATUS_LOADED, loaded, n) .. loading .. suffix
     end
     if not RBP.currentRaid then return "" end
     local c = RBP.cache[RBP.currentRaid]
     local groups = 0
     if c then for _, e in ipairs(c.entries) do if e.isGroup then groups = groups + 1 end end end
     local age = RBP:ListAge(RBP.currentRaid)
-    local ageText = age and Ago(age) .. " ago" or "waiting"
+    local ageText = age and format(L.AGO, Ago(age)) or L.STATUS_WAITING
     if RBP:IsUpdateStale() then ageText = Col(C.warn, ageText) end
-    local chat = (RBP.chatCount or 0) > 0 and format(", %d from chat", RBP.chatCount) or ""
-    return format("%d listing%s (%d group%s%s)  -  updated %s%s", total, total == 1 and "" or "s",
-        groups, groups == 1 and "" or "s", chat, ageText, suffix)
+    local chat = (RBP.chatCount or 0) > 0 and format(L.STATUS_FROM_CHAT, RBP.chatCount) or ""
+    return listings .. " (" .. format(RBP.Plural(groups, "STATUS_GROUPS"), groups) .. chat .. ")  -  "
+        .. format(L.STATUS_UPDATED, ageText) .. suffix
 end
 
 function UI:UpdateStatus()
@@ -2174,19 +2179,16 @@ end
 
 function UI:ShowStatusTooltip(owner)
     GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
-    GameTooltip:AddLine("Raid list status", 1, 1, 1)
+    GameTooltip:AddLine(L.STATUS_TITLE, 1, 1, 1)
     if RBP.mode == "all" then
-        GameTooltip:AddLine("All raids shows the latest list of every raid you have loaded in the last 10 minutes. "
-            .. "Only the raid loaded last gets live updates; the Raid column turns grey for lists older than 2 minutes. "
-            .. "Use Next raid (or its key binding) to load or refresh raids one at a time.", 1, 0.82, 0, true)
+        GameTooltip:AddLine(L.STATUS_ALL_TIP, 1, 0.82, 0, true)
         local joined = SearchLFGGetJoinedID and SearchLFGGetJoinedID()
         if joined then
             GameTooltip:AddLine(" ")
-            GameTooltip:AddDoubleLine("Live", RBP:RaidLabel(joined), 0.7, 0.7, 0.7, 1, 1, 1)
+            GameTooltip:AddDoubleLine(L.STATUS_LIVE, RBP:RaidLabel(joined), 0.7, 0.7, 0.7, 1, 1, 1)
         end
     else
-        GameTooltip:AddLine("Changes to the raid you browse arrive on their own within a few seconds; the age is the time since the list last changed. "
-            .. "If the age turns orange, updates have stopped arriving; Refresh reloads the list.", 1, 0.82, 0, true)
+        GameTooltip:AddLine(L.STATUS_SINGLE_TIP, 1, 0.82, 0, true)
     end
     GameTooltip:Show()
 end
@@ -2194,11 +2196,11 @@ end
 function UI:UpdateDropdownText()
     local text
     if RBP.mode == "all" then
-        text = "All raids"
+        text = L.ALL_RAIDS
     elseif RBP.currentRaid then
         text = RBP:RaidLabel(RBP.currentRaid)
     else
-        text = "Choose a raid"
+        text = L.CHOOSE_RAID
     end
     UIDropDownMenu_SetText(self.dropdown, text)
 end
@@ -2214,7 +2216,7 @@ function UI:InitRaidMenu(level)
     end
     if level == 1 then
         local info = UIDropDownMenu_CreateInfo()
-        info.text = "All raids"
+        info.text = L.ALL_RAIDS
         info.value = "all"
         info.checked = RBP.mode == "all"
         info.func = function() CloseDropDownMenus(); RBP:SetMode("all") end
@@ -2232,7 +2234,7 @@ function UI:InitRaidMenu(level)
         if not h then return end
         for _, id in ipairs(h.raids) do
             local info = UIDropDownMenu_CreateInfo()
-            info.text = RBP:RaidLabel(id) .. (RBP:LockoutFor(id) and ("  " .. Col(C.warn, "saved")) or "") .. count(id)
+            info.text = RBP:RaidLabel(id) .. (RBP:LockoutFor(id) and ("  " .. Col(C.warn, L.SAVED)) or "") .. count(id)
             info.value = id
             info.checked = RBP.mode == "single" and RBP.currentRaid == id
             info.func = function() CloseDropDownMenus(); RBP:SetMode("single", id) end

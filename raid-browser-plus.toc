@@ -1,12 +1,28 @@
 ## Interface: 30300
 ## Title: Raid Browser|cff33ff99+|r
 ## Notes: A bigger, sortable, filterable Raid Browser with an all-raids view, specs, item levels, boss progress and group composition.
+## Notes-deDE: Ein größerer, sortier- und filterbarer Schlachtzugsbrowser mit Ansicht aller Schlachtzüge, Skillungen, Gegenstandsstufen, Bossfortschritt und Gruppenzusammensetzung.
+## Notes-esES: Un Buscador de bandas más grande, con orden y filtros: vista de todas las bandas, especializaciones, niveles de objeto, progreso de jefes y composición de grupo.
+## Notes-esMX: Un Buscador de bandas más grande, con orden y filtros: vista de todas las bandas, especializaciones, niveles de objeto, progreso de jefes y composición de grupo.
+## Notes-frFR: Une Recherche de raid plus grande, triable et filtrable : vue de tous les raids, spécialisations, niveaux d'objet, progression des boss et composition des groupes.
+## Notes-ruRU: Увеличенный «Поиск рейда» с сортировкой и фильтрами: все рейды сразу, специализации, уровни предметов, прогресс по боссам и состав групп.
+## Notes-koKR: 정렬과 필터를 갖춘 더 큰 공격대 찾기: 모든 공격대 보기, 특성, 아이템 레벨, 우두머리 진행도, 파티 구성.
+## Notes-zhCN: 更大的团队浏览器，可排序和过滤：所有副本视图、天赋、装备等级、首领进度和队伍构成。
+## Notes-zhTW: 更大的團隊瀏覽器，可排序與過濾：所有團隊檢視、天賦、物品等級、首領進度與隊伍組成。
 ## Author: heyitsbench
 ## Version: 1.0.2
 ## SavedVariables: RaidBrowserPlusDB
 ## SavedVariablesPerCharacter: RaidBrowserPlusCharDB
 
 Data.lua
+Locales\enUS.lua
+Locales\deDE.lua
+Locales\esES.lua
+Locales\frFR.lua
+Locales\ruRU.lua
+Locales\koKR.lua
+Locales\zhCN.lua
+Locales\zhTW.lua
 Core.lua
 Chat.lua
 UI.lua

@@ -4,123 +4,154 @@
 local RBP = RaidBrowserPlus
 local format, floor = string.format, math.floor
 
----------------------------------------------------------------------------
--- Words players use for raids, roles and ad types (lowercase). Raid codes are
--- the short names of RBP.RAID_SHORT, so a match maps onto Raid Browser raids.
----------------------------------------------------------------------------
-local RAID_ALIASES = {
-    ICC = { "icc", "icecrown", "icecrown citadel", "lk", "lich king", "marrowgar", "deathwhisper", "saurfang",
-            "festergut", "rotface", "putricide", "sindragosa", "sindy", "storming the citadel", "plagueworks",
-            "crimson hall", "frostwing halls", "frozen throne", "fall of the lich king", "glory of the icecrown raider" },
-    RS = { "rs", "ruby", "ruby sanctum", "halion", "twilight destroyer" },
-    ToC = { "toc", "trial of the crusader", "jaraxxus", "anub'arak", "call of the crusade" },
-    ToGC = { "togc", "trial of the grand crusader", "call of the grand crusade" },
-    Ulduar = { "uld", "ulda", "uldu", "ulduar", "uldaur", "yogg", "yogg saron", "algalon", "leviathan", "razorscale",
-               "ignis", "xt 002", "mimiron", "hodir", "thorim", "freya" },
-    Naxx = { "nax", "naxx", "naxxramas", "anub'rekhan", "noth", "patchwerk", "razuvious", "kel'thuzad", "kt" },
-    OS = { "os", "sarth", "sartharion", "obsidian sanctum", "twilight zone", "besting the black dragonflight" },
-    EoE = { "eoe", "maly", "malygos", "eye of eternity", "spellweaver's downfall" },
-    VoA = { "voa", "vault of archavon", "archavon", "emalon", "koralon", "toravon" },
-    Ony = { "ony", "onyxia", "onyxia's", "onyxias", "onyxia's lair" },
-    Kara = { "kara", "karazhan" },
-    Gruul = { "gruul", "gruul's", "gruuls" },
-    Mag = { "mag", "magtheridon", "magtheridon's" },
-    SSC = { "ssc", "serpentshrine", "serpentshrine cavern" },
-    TK = { "tk", "tempest keep" },
-    Hyjal = { "hyjal", "mount hyjal", "mh" },
-    BT = { "bt", "black temple", "illidan" },
-    SWP = { "swp", "sunwell", "sunwell plateau" },
-    ZA = { "zul'aman", "zulaman" },
-    ZG = { "zg", "zul'gurub", "zulgurub" },
-    MC = { "mc", "molten core" },
-    BWL = { "bwl", "blackwing lair" },
-    AQ = { "aq", "ahn'qiraj" },              -- AQ20 or AQ40, decided by the size
-    AQ20 = { "ruins of ahn'qiraj" },
-    AQ40 = { "temple of ahn'qiraj" },
-}
--- Achievements that name one size and difficulty (players link them as proof).
-local IMPLIED = {
-    ["bane of the fallen king"] = { "ICC", 10, true },
-    ["the light of dawn"] = { "ICC", 25, true },
-}
+if RBP.needsRestart then return end -- see Core.lua
+local L = RBP.L
 
-local ROLE_WORDS = {
-    TANK = { "tank", "tanks", "tnk", "tnak", "tnaks", "tanky", "mt", "ot", "offtank", "prot", "bear" },
-    HEALER = { "heal", "heals", "healz", "healer", "healers", "heler", "hpala", "hpal", "hpaly", "hpally", "holy",
-               "hpriest", "dpriest", "disc", "resto", "rdruid", "rdudu", "rsham", "rshamy", "rshammy", "rshaman", "tree" },
-    DAMAGER = { "dps", "rdps", "rpds", "mdps", "dd", "caster", "casters", "melee", "range", "ranged", "boomkin", "boomy",
-                "bommy", "boom", "moonkin", "spriest", "sp", "ele", "enh", "enha", "ret", "fury", "fwar", "arms",
-                "feral", "cat", "kitty", "fdk", "udk", "mage", "mages", "lock", "locks", "warlock", "warlocks",
-                "hunter", "hunters", "hunt", "rogue", "rogues" },
-}
-
+---------------------------------------------------------------------------
+-- The words ads are read with (the Locales folder), merged for the languages read.
+-- Raid codes are the short names of RBP.RAID_SHORT, so a match maps onto
+-- Raid Browser raids.
+---------------------------------------------------------------------------
 local SIZES = { ["10"] = 10, ["25"] = 25, ["20"] = 20, ["40"] = 40 }
-local HEROIC = { hc = true, h = true, heroic = true, hero = true, mhc = true, manhc = true }
-local NORMAL = { nm = true, n = true, normal = true, norm = true, mnm = true, mannm = true }
-local SALES = { wts = true, wtb = true, wtt = true, selling = true, buying = true, sell = true, buy = true,
-    boost = true, boosts = true, boosting = true }
-local ARTICLES = { a = true, an = true, the = true, some = true, any = true }
-local GROUP_WORDS = { raid = true, raids = true, group = true, grp = true, run = true, runs = true, team = true }
-local RESERVE_WORDS = { res = true, ress = true, reserved = true, reserve = true, reserverd = true, resserved = true, hr = true }
--- "/w me", "wis me", "pst": asking for whispers, which a recruiting group does
-local WHISPER_WORDS = { w = true, wis = true, wiss = true, wisp = true, whisp = true, whisper = true, pst = true }
--- guild recruitment, in English and the languages seen on 3.3.5 realms
-local RECRUIT_PREFIXES = { "recruit", "recuit", "recrut", "recluta", "rekrut", "regrut", "nabira", "trazi", "apply",
-    "shivtr", "http", "www", "member", "roster", "progression", "gprog" }
--- skipped between a raid name and its size: "[Sartharion Must Die!] 25"
-local FILLER_AFTER_RAID = { must = true, die = true }
-local ACHI_WORDS = { achi = true, achiv = true, achieve = true, achievement = true, ach = true, achiev = true }
--- "12/12 achi", "aim 12/12", "12/12 exp": requirements, not how far the run got
-local REQUIREMENT_WORDS = { exp = true, xp = true, experience = true, experienced = true, aim = true, req = true,
-    min = true, achi = true, achiv = true, achieve = true, achievement = true, ach = true, achiev = true }
--- Short names that are also ordinary words: "os" (Portuguese "the"), "rs" (a
--- laugh in Portuguese), "mag" (mage), "tk" (tank), "aq" (Spanish "here"), "ruby"
--- (the gem). They count when a size, difficulty or drake count is written next
--- to them, or (except "ruby") when they are the only raid the ad names.
-local LOOSE = { os = 1, rs = 1, mag = 1, tk = 1, mh = 1, bt = 1, mc = 1, zg = 1, kt = 1, aq = 1, ruby = 2 }
--- "need": a group asking, unless it's a question ("do i need") or a player
--- offering ("anyone need a tank?")
-local NEED_WORDS = { need = true, needs = true, needed = true }
-local ASKING_WORDS = { i = true, u = true, you = true, ya = true, ["do"] = true, does = true, did = true, how = true,
-    what = true, wat = true, where = true, why = true, should = true, ["if"] = true }
-local OFFER_WORDS = { anyone = true, any1 = true, anybody = true, someone = true, some1 = true, somebody = true, who = true }
--- past tense and the like: someone telling about a raid, not advertising one
-local STORY_WORDS = { was = true, were = true, had = true, did = true, didnt = true, ["didn't"] = true,
-    yesterday = true, ago = true, wiped = true, used = true }
--- words of a sentence rather than an ad
-local SENTENCE_WORDS = { is = true, are = true, am = true, it = true, its = true, ["it's"] = true, they = true,
-    ["they're"] = true, you = true, your = true, ["you're"] = true, i = true, ["i'm"] = true, im = true, my = true,
-    would = true, should = true, could = true, think = true, because = true, than = true, but = true, ["if"] = true,
-    so = true, really = true, lol = true }
-local SIZE_FILLER = { m = true, man = true, player = true, ppl = true, er = true, full = true, only = true, fresh = true }
--- "guild run" and "with guildies" are pickup raids; other "guild..." is recruitment
-local GUILD_OK = { guildie = true, guildies = true, guildmate = true, guildmates = true }
-local INV_ASKING = { me = true, pls = true, plz = true, please = true, pl = true, pliz = true }
+local EMPTY = {}
+local K = {}               -- word sets and lists of the languages read
+local ROLE_OF = {}         -- word -> role
+local ALIASES_BY_FIRST = {} -- first word -> raid names starting with it, longest first
+local SEGMENT_INDEX        -- first character -> words to split out, longest first (Chinese, Korean)
+local SET_FIELDS = { "lfm", "lfg", "articles", "group", "need", "asking", "offer", "all", "allAfter", "heroic", "normal",
+    "sizeFiller", "afterRaid", "beforeRaid", "drake", "sales", "guildRun", "guildOk", "more", "negation", "whisper",
+    "whisperMe", "whisperAlone", "invite", "inviteAsking", "story", "sentence", "reserve", "achievement",
+    "requirement", "fresh", "discord", "gdkp" }
+local PREFIX_FIELDS = { "recruit", "countable", "guild" } -- word beginnings
 
--- word -> role, and phrase lookups built once
-local ROLE_OF = {}
-for role, words in pairs(ROLE_WORDS) do for _, w in ipairs(words) do ROLE_OF[w] = role end end
-local ALIAS_LIST = {} -- { words = { ... }, code = "ICC", size?, heroic? }, longest first
-local function AddAlias(phrase, code, size, heroic)
-    local words = {}
-    for w in phrase:gmatch("%S+") do words[#words + 1] = w end
-    ALIAS_LIST[#ALIAS_LIST + 1] = { words = words, code = code, size = size, heroic = heroic, loose = LOOSE[phrase] }
+-- every word a language lists, for splitting text written without spaces
+local function EachWord(loc, fn)
+    local function each(v)
+        if type(v) == "string" then
+            for part in v:gmatch("%S+") do fn(part) end
+        elseif type(v) == "table" then
+            for _, x in pairs(v) do each(x) end
+        end
+    end
+    for k, v in pairs(loc) do
+        if k == "implied" or k == "loose" then
+            for w in pairs(v) do each(w) end
+        elseif k ~= "normalize" and k ~= "name" and k ~= "segment" then
+            each(v)
+        end
+    end
 end
-for code, list in pairs(RAID_ALIASES) do
-    for _, a in ipairs(list) do AddAlias(a, code) end
+
+-- Read chat ads with these languages' words (codes of RBP.CHAT_LOCALES;
+-- English is always included).
+function RBP.SetChatLanguages(codes)
+    wipe(K)
+    for _, f in ipairs(SET_FIELDS) do K[f] = {} end
+    for _, f in ipairs(PREFIX_FIELDS) do K[f] = {} end
+    K.lfSingle, K.lfPhrases, K.normalize, K.loose = {}, {}, {}, {}
+    wipe(ROLE_OF)
+    wipe(ALIASES_BY_FIRST)
+    local aliases, segWords, used, langs = {}, {}, {}, {}
+    local list = { "enUS" }
+    for _, code in ipairs(codes or EMPTY) do list[#list + 1] = code end
+    for _, code in ipairs(list) do
+        local loc = RBP.CHAT_LOCALES[code]
+        if loc and not used[code] then
+            used[code] = true
+            langs[#langs + 1] = code
+            for _, f in ipairs(SET_FIELDS) do for _, w in ipairs(loc[f] or EMPTY) do K[f][w] = true end end
+            for _, f in ipairs(PREFIX_FIELDS) do for _, w in ipairs(loc[f] or EMPTY) do table.insert(K[f], w) end end
+            for _, w in ipairs(loc.lf or EMPTY) do
+                if w:find(" ", 1, true) then
+                    local ws = {}
+                    for x in w:gmatch("%S+") do ws[#ws + 1] = x end
+                    K.lfPhrases[#K.lfPhrases + 1] = ws -- "looking for"
+                else
+                    K.lfSingle[w] = true
+                end
+            end
+            for role, words in pairs(loc.roles or EMPTY) do for _, w in ipairs(words) do ROLE_OF[w] = role end end
+            for w, v in pairs(loc.loose or EMPTY) do K.loose[w] = v end
+            for _, pair in ipairs(loc.normalize or EMPTY) do K.normalize[#K.normalize + 1] = pair end
+            for code2, names in pairs(loc.raids or EMPTY) do
+                for _, a in ipairs(names) do aliases[#aliases + 1] = { a, code2 } end
+            end
+            for phrase, v in pairs(loc.implied or EMPTY) do aliases[#aliases + 1] = { phrase, v[1], v[2], v[3] } end
+            if loc.segment then
+                EachWord(loc, function(w) if w:find("[\128-\255]") then segWords[w] = true end end)
+            end
+        end
+    end
+
+    local all = {}
+    for _, a in ipairs(aliases) do
+        local words = {}
+        for w in a[1]:gmatch("%S+") do words[#words + 1] = w end
+        all[#all + 1] = { words = words, code = a[2], size = a[3], heroic = a[4], loose = K.loose[a[1]] }
+    end
+    table.sort(all, function(a, b)
+        if #a.words ~= #b.words then return #a.words > #b.words end
+        return table.concat(a.words, " ") < table.concat(b.words, " ")
+    end)
+    -- by first word, longest first: every chat line is parsed, so each word
+    -- only checks the names that start with it
+    for _, a in ipairs(all) do
+        local l = ALIASES_BY_FIRST[a.words[1]]
+        if not l then l = {}; ALIASES_BY_FIRST[a.words[1]] = l end
+        l[#l + 1] = a
+    end
+
+    SEGMENT_INDEX = nil
+    if next(segWords) then
+        SEGMENT_INDEX = {}
+        for w in pairs(segWords) do
+            local b = w:byte(1)
+            local first = w:sub(1, (b >= 240 and 4) or (b >= 224 and 3) or (b >= 192 and 2) or 1)
+            local l = SEGMENT_INDEX[first]
+            if not l then l = {}; SEGMENT_INDEX[first] = l end
+            l[#l + 1] = w
+        end
+        for _, l in pairs(SEGMENT_INDEX) do table.sort(l, function(a, b) return #a > #b end) end
+    end
+    RBP.chatLanguages = langs
 end
-for phrase, v in pairs(IMPLIED) do AddAlias(phrase, v[1], v[2], v[3]) end
-table.sort(ALIAS_LIST, function(a, b)
-    if #a.words ~= #b.words then return #a.words > #b.words end
-    return table.concat(a.words, " ") < table.concat(b.words, " ")
-end)
--- by first word, longest first: every chat line is parsed, so each word only
--- checks the names that start with it
-local ALIASES_BY_FIRST = {}
-for _, a in ipairs(ALIAS_LIST) do
-    local list = ALIASES_BY_FIRST[a.words[1]]
-    if not list then list = {}; ALIASES_BY_FIRST[a.words[1]] = list end
-    list[#list + 1] = a
+
+-- the client's language until the saved settings are read
+RBP.SetChatLanguages({ RBP.CHAT_LOCALE_OF[GetLocale and GetLocale() or "enUS"] })
+
+local function HasAny(has, set)
+    for w in pairs(set) do if has[w] then return true end end
+    return false
+end
+
+-- Split the words of Chinese and Korean out of text written without spaces
+-- ("缺2t3奶" -> " 缺 2t3 奶 "), longest word first.
+local function Segment(s)
+    if not SEGMENT_INDEX then return s end
+    local out, i, n = {}, 1, #s
+    while i <= n do
+        local b = s:byte(i)
+        if b < 128 then
+            local j = s:find("[\128-\255]", i) or (n + 1)
+            out[#out + 1] = s:sub(i, j - 1)
+            i = j
+        else
+            local len = (b >= 240 and 4) or (b >= 224 and 3) or (b >= 192 and 2) or 1
+            local ch = s:sub(i, i + len - 1)
+            local hit
+            for _, w in ipairs(SEGMENT_INDEX[ch] or EMPTY) do
+                if s:sub(i, i + #w - 1) == w then hit = w; break end
+            end
+            if hit then
+                out[#out + 1] = " " .. hit .. " "
+                i = i + #hit
+            else
+                out[#out + 1] = ch
+                i = i + len
+            end
+        end
+    end
+    return table.concat(out)
 end
 
 ---------------------------------------------------------------------------
@@ -183,6 +214,7 @@ local function SplitDigits(words)
     local t = {}
     for _, word in ipairs(words) do
         local s = word:gsub("(%a)(%d)", "%1 %2"):gsub("(%d)(%a)", "%1 %2")
+            :gsub("([\128-\255])(%d)", "%1 %2"):gsub("(%d)([\128-\255])", "%1 %2") -- "цлк25", "25人"
         for part in s:gmatch("%S+") do t[#t + 1] = part end
     end
     return t
@@ -211,7 +243,7 @@ local function ScanRaids(t, out, sizeAt, fromLink)
         end
         if hit then
             local j = i + #hit.words -- first word after the name
-            while FILLER_AFTER_RAID[t[j] or ""] do j = j + 1 end
+            while K.afterRaid[t[j] or ""] do j = j + 1 end
             local sizes, dungeon, drakes = {}, false, false
             if hit.size then sizes[1] = hit.size end
             -- both written ("nm/hc") means either; nil when neither is written
@@ -226,14 +258,14 @@ local function ScanRaids(t, out, sizeAt, fromLink)
                     if not dup then sizes[#sizes + 1] = SIZES[w] end
                 elseif w == "5" and k == j then
                     dungeon = true -- "toc 5": the five-player dungeon
-                elseif w:match("^[0-3]$") and (t[k + 1] == "d" or t[k + 1] == "drake" or t[k + 1] == "drakes") then
+                elseif w:match("^[0-3]$") and K.drake[t[k + 1] or ""] then
                     drakes = true -- "os 3d"
                     k = k + 1
-                elseif HEROIC[w] then
+                elseif K.heroic[w] then
                     sawHeroic = true
-                elseif NORMAL[w] then
+                elseif K.normal[w] then
                     sawNormal = true
-                elseif not SIZE_FILLER[w] then
+                elseif not K.sizeFiller[w] then
                     break -- "10m", "25 man", "(25 player)", "25er", "ICC 10 only normal"
                 end
                 k = k + 1
@@ -242,10 +274,10 @@ local function ScanRaids(t, out, sizeAt, fromLink)
             -- "10 man [Sartharion ...]", "hc icc"; not past the raid before
             for b = i - 1, math.max(prevEnd + 1, i - 4), -1 do
                 local w = t[b]
-                if HEROIC[w] then sawHeroic = true
-                elseif NORMAL[w] then sawNormal = true
+                if K.heroic[w] then sawHeroic = true
+                elseif K.normal[w] then sawNormal = true
                 elseif SIZES[w] and #sizes == 0 then sizes[1] = SIZES[w]; sizeAt[b] = true
-                elseif not (w == "m" or w == "man" or w == "player" or w == "the" or w == "of") then break end
+                elseif not K.beforeRaid[w] then break end
             end
             local heroic
             if sawHeroic ~= sawNormal then heroic = sawHeroic end
@@ -287,21 +319,23 @@ function RBP.ParseAd(msg, groupComment)
         return " "
     end)
     local s = RBP.Lower(plain)
+    for _, pair in ipairs(K.normalize) do s = s:gsub(pair[1], pair[2]) end -- "5.8к" -> "5.8k"
+    s = Segment(s)
     local words = Words(s)
     if #words == 0 then return nil end
     local has = {}
     for _, w in ipairs(words) do has[w] = true end
 
     -- not raid ads: trading and guild recruitment
-    for w in pairs(has) do if SALES[w] then return nil end end
+    if HasAny(has, K.sales) then return nil end
     for idx, w in ipairs(words) do
         local prev, nextWord = words[idx - 1] or "", words[idx + 1]
-        local recruiting = StartsWithAny(w, RECRUIT_PREFIXES)
-        if recruiting and w:sub(1, 6) == "member" and (prev == "more" or prev == "few" or tonumber(prev)) then
+        local recruiting = StartsWithAny(w, K.recruit)
+        if recruiting and StartsWithAny(w, K.countable) and (K.more[prev] or tonumber(prev)) then
             recruiting = false -- "need 3 more members"
         end
-        if w:sub(1, 5) == "guild" and not GUILD_OK[w] and nextWord ~= "run" and nextWord ~= "runs" then
-            recruiting = true
+        if StartsWithAny(w, K.guild) and not K.guildOk[w] and not K.guildRun[nextWord or ""] then
+            recruiting = true -- but "guild run", "with guildies"
         end
         if recruiting then return nil end
     end
@@ -309,7 +343,7 @@ function RBP.ParseAd(msg, groupComment)
     local t = SplitDigits(words)
     local mentions, sizeAt = {}, {}
     ScanRaids(t, mentions, sizeAt, false)
-    for _, text in ipairs(linked) do ScanRaids(SplitDigits(Words(RBP.Lower(text))), mentions, {}, true) end
+    for _, text in ipairs(linked) do ScanRaids(SplitDigits(Words(Segment(RBP.Lower(text)))), mentions, {}, true) end
     -- A loose short name with nothing written next to it counts only as the
     -- only raid named: "todos os roles" in an ICC ad is not Obsidian Sanctum.
     local firm, looseCodes, nLoose = {}, {}, 0
@@ -371,12 +405,12 @@ function RBP.ParseAd(msg, groupComment)
     for idx, w in ipairs(t) do
         local role = ROLE_OF[w] or (w:sub(1, 1) == "x" and ROLE_OF[w:sub(2)])
         local before = t[idx - 1]
-        if before == "more" or before == "few" then before = t[idx - 2] end
-        if before == "no" or before == "not" or before == "without" then role = nil end -- "need dps, no tanks"
+        if K.more[before or ""] then before = t[idx - 2] end
+        if K.negation[before or ""] then role = nil end -- "need dps, no tanks"
         if role then
             local p = idx - 1
             if t[p] == "x" then p = idx - 2 end
-            if t[p] == "more" then p = p - 1 end -- "3 more heals"
+            if K.more[t[p] or ""] then p = p - 1 end -- "3 more heals"
             local n = tonumber(t[p] or "")
             if n and sizeAt[p] then n, sizedRole = nil, true end
             if n and n >= 1 and n <= 20 then
@@ -389,7 +423,7 @@ function RBP.ParseAd(msg, groupComment)
     local needAll = false
     for idx, w in ipairs(words) do
         local prev = words[idx - 1]
-        if w == "all" and (prev == "need" or prev == "needs" or prev == "lfm" or prev == "lf" or prev == "me") then needAll = true end
+        if K.all[w] and prev and (K.need[prev] or K.lfm[prev] or K.lfSingle[prev] or K.allAfter[prev]) then needAll = true end
     end
 
     local fill, progress
@@ -402,8 +436,9 @@ function RBP.ParseAd(msg, groupComment)
         elseif (y == 10 or y == 25 or y == 20 or y == 40) and x <= y then
             fill = fill or format("%d/%d", x, y)
         elseif y >= 1 and y <= 16 and x < y then
-            local before, nextWord = s:sub(1, at - 1):match("(%a+)%W*$"), s:sub(after):match("^%W*(%a+)")
-            if not (REQUIREMENT_WORDS[before or ""] or REQUIREMENT_WORDS[nextWord or ""]) then
+            local before = s:sub(1, at - 1):match("([%w\128-\255]+)[^%w\128-\255]*$")
+            local nextWord = s:sub(after):match("^[^%w\128-\255]*([%w\128-\255]+)")
+            if not (K.requirement[before or ""] or K.requirement[nextWord or ""]) then
                 progress = progress or format("%d/%d", x, y)
             end
         end
@@ -414,8 +449,7 @@ function RBP.ParseAd(msg, groupComment)
             for _, r in ipairs(raids) do if #r.sizes == 0 then r.sizes[1] = size end end
         end
     end
-    local reserved = false
-    for w in pairs(has) do if RESERVE_WORDS[w] then reserved = true end end
+    local reserved = HasAny(has, K.reserve)
 
     -- Ad type. A group: LFM, LF2M. A player: LFG. Then "need" (a group, unless
     -- it is asked as a question or offered: "anyone need a tank?"), "LF <raid>"
@@ -423,37 +457,45 @@ function RBP.ParseAd(msg, groupComment)
     -- signs of a group: role counts, "need all", asking for whispers or
     -- offering invites, a fill count, reserved items.
     local kind = groupComment and "lfm" or nil
-    if has.lfm then kind = "lfm" end
+    if HasAny(has, K.lfm) then kind = "lfm" end
     for _, w in ipairs(words) do
         if w:match("^lf%d+m?$") then kind = "lfm" end
     end
-    if not kind and has.lfg then kind = "lf" end
+    if not kind and HasAny(has, K.lfg) then kind = "lf" end
     if not kind then
         for idx, w in ipairs(words) do
-            if NEED_WORDS[w] then
-                if OFFER_WORDS[words[idx - 1] or ""] then kind = "lf"; break end
+            if K.need[w] then
+                -- "anyone need a tank?", "braucht jemand einen tank?"
+                if K.offer[words[idx - 1] or ""] or K.offer[words[idx + 1] or ""] then kind = "lf"; break end
                 local asking = false
-                for b = idx - 1, math.max(1, idx - 3), -1 do if ASKING_WORDS[words[b]] then asking = true end end
+                for b = idx - 1, math.max(1, idx - 3), -1 do if K.asking[words[b]] then asking = true end end
                 if not asking then kind = "lfm"; break end
             end
         end
     end
     if not kind then
         for idx, w in ipairs(words) do
-            local nextWord = words[idx + 1]
-            local looking = (w == "lf") or (w == "looking" and nextWord == "for")
-            if looking then
-                local k = idx + ((w == "looking") and 2 or 1)
-                while words[k] and ARTICLES[words[k]] do k = k + 1 end
+            -- "lf", "looking for", "suche", "ищу"...
+            local after = K.lfSingle[w] and idx + 1
+            if not after then
+                for _, phrase in ipairs(K.lfPhrases) do
+                    local ok = true
+                    for n = 1, #phrase do if words[idx + n - 1] ~= phrase[n] then ok = false; break end end
+                    if ok then after = idx + #phrase; break end
+                end
+            end
+            if after then
+                local k = after
+                while words[k] and K.articles[words[k]] do k = k + 1 end
                 local target = words[k]
                 if not target then
-                    if w == "lf" then kind = "lf" end -- "ICC 25 tank LF"
+                    if K.lfSingle[w] then kind = "lf" end -- "ICC 25 tank LF"
                 else
                     local first = SplitDigits({ target })[1]
                     local isRaid = ALIASES_BY_FIRST[first] ~= nil
-                    if target == "all" then
+                    if K.all[target] then
                         kind, needAll = "lfm", true
-                    elseif isRaid or GROUP_WORDS[target] then
+                    elseif isRaid or K.group[target] then
                         kind = "lf"
                     elseif ROLE_OF[target] or tonumber(target) or target:match("^%d+m?$") or target:match("^%d+x") then
                         kind = "lfm" -- "LF tank", "LF 2 heals", "LF 2m"
@@ -471,24 +513,22 @@ function RBP.ParseAd(msg, groupComment)
         local invites, askingInvite = false, false
         for idx, w in ipairs(words) do
             local nextWord = words[idx + 1]
-            if WHISPER_WORDS[w] and (nextWord == "me" or nextWord == "m" or w == "pst") then whisper = true end
+            if (K.whisper[w] and K.whisperMe[nextWord or ""]) or K.whisperAlone[w] then whisper = true end
             -- "inv" from a group, but "inv me pls" is a player asking
-            if w == "inv" then
-                if INV_ASKING[nextWord or ""] then askingInvite = true else invites = true end
+            if K.invite[w] then
+                if K.inviteAsking[nextWord or ""] then askingInvite = true else invites = true end
             end
         end
         -- Talk about raids, not an ad: "most EoE 10 raids didn't do any HR on
         -- the ring". Only these weak signs give way to it.
-        local story = false
-        for w in pairs(has) do if STORY_WORDS[w] then story = true end end
+        local story = HasAny(has, K.story)
         -- reserved items count when the ad also asks for a GearScore
         -- ("FAST RUN 5,5K GS + B/P/O RESS"); "HR" alone is just as often talk
         local reservedAd = reserved and ParseGS(s) ~= nil
         -- Role counts and reserves alone read as an ad only in ad shorthand
         -- ("TOC 10 NM 1 TANK 1 HEAL"), not in a sentence ("icc is easier
         -- with 3 heals").
-        local sentence = false
-        for w in pairs(has) do if SENTENCE_WORDS[w] then sentence = true end end
+        local sentence = HasAny(has, K.sentence)
         if askingInvite then
             kind = "lf"
         elseif not story and (needAll or invites or whisper or fill
@@ -506,12 +546,12 @@ function RBP.ParseAd(msg, groupComment)
     end
 
     local ad = { kind = kind, raids = raids, roles = roles, anyRole = anyRole, gs = ParseGS(s), fill = fill, progress = progress }
-    ad.fresh = has.fresh or nil
+    ad.fresh = HasAny(has, K.fresh) or nil
     ad.reserved = reserved or nil
-    for w in pairs(has) do if ACHI_WORDS[w] then ad.achievement = true end end
+    ad.achievement = HasAny(has, K.achievement) or nil
     ad.achievementLinked = #linked > 0 or nil
-    ad.discord = (has.discord or has.dc) or nil
-    ad.gdkp = has.gdkp or nil
+    ad.discord = HasAny(has, K.discord) or nil
+    ad.gdkp = HasAny(has, K.gdkp) or nil
     return ad
 end
 
@@ -600,7 +640,7 @@ function RBP:AlertChatAd(rec)
         PlaySound("ReadyCheck")
     end
     local cc = self:ClassColor(e.class)
-    self:Print("new in chat: |cff%s|Hplayer:%s|h[%s]|h|r - %s", cc, e.name, e.name, self:ChatAdSummary(e.ad))
+    self:Print(L.CHAT_ALERT_NEW, format("|cff%s|Hplayer:%s|h[%s]|h|r", cc, e.name, e.name), self:ChatAdSummary(e.ad))
 end
 
 function RBP:ChatExpire()
@@ -716,40 +756,89 @@ function RBP:ChatEntries()
 end
 
 local chatFrame = CreateFrame("Frame")
-for _, ev in ipairs({ "CHAT_MSG_CHANNEL", "CHAT_MSG_YELL", "CHAT_MSG_GUILD" }) do chatFrame:RegisterEvent(ev) end
+for _, ev in ipairs({ "CHAT_MSG_CHANNEL", "CHAT_MSG_YELL", "CHAT_MSG_GUILD", "PLAYER_LOGIN" }) do chatFrame:RegisterEvent(ev) end
 chatFrame:SetScript("OnEvent", function(_, event, msg, author, _, _, _, _, _, _, channelName, _, _, guid)
+    if event == "PLAYER_LOGIN" then return RBP:ApplyChatLanguages() end -- the saved choice
     RBP:OnChatMessage(event, msg, author, channelName, guid)
 end)
 
 ---------------------------------------------------------------------------
+-- Languages read: English, plus the client's language (db.chat.languages =
+-- "client") or the languages picked ({ deDE = true, ... }).
+---------------------------------------------------------------------------
+function RBP:ChatLanguageCodes()
+    local c = self.db and self.db.chat
+    local codes = {}
+    if c and type(c.languages) == "table" then
+        for _, code in ipairs(RBP.CHAT_LOCALE_ORDER) do if c.languages[code] then codes[#codes + 1] = code end end
+    else
+        local client = RBP.CHAT_LOCALE_OF[GetLocale and GetLocale() or ""]
+        if client and client ~= "enUS" then codes[1] = client end
+    end
+    return codes
+end
+
+function RBP:ApplyChatLanguages()
+    RBP.SetChatLanguages(self:ChatLanguageCodes())
+    for _, rec in pairs(self.chatAds) do rec.entry = nil end
+    self:RequestRefresh()
+end
+
+function RBP:ChatLanguageNames()
+    local names = {}
+    for _, code in ipairs(RBP.chatLanguages or { "enUS" }) do names[#names + 1] = L["LANG_" .. code] end
+    return table.concat(names, ", ")
+end
+
+-- turn a language on or off ("dede", "german"), starting from the ones read now
+function RBP:ToggleChatLanguage(which)
+    local c = self.db.chat
+    local code
+    for _, cd in ipairs(RBP.CHAT_LOCALE_ORDER) do
+        if RBP.Lower(cd) == which or RBP.Lower(RBP.CHAT_LOCALES[cd].name) == which
+            or RBP.Lower(L["LANG_" .. cd]) == which then code = cd end
+    end
+    if not code then
+        if which == "esmx" then code = "esES" else return false end
+    end
+    if type(c.languages) ~= "table" then
+        local t = {}
+        for _, cd in ipairs(self:ChatLanguageCodes()) do t[cd] = true end
+        c.languages = t
+    end
+    c.languages[code] = (not c.languages[code]) or nil
+    self:ApplyChatLanguages()
+    return true
+end
+
+---------------------------------------------------------------------------
 -- /rbp chat
 ---------------------------------------------------------------------------
-local function OnOff(v) return v and "on" or "off" end
-local ROLE_NAME = { TANK = { "tank", "tanks" }, HEALER = { "healer", "healers" }, DAMAGER = { "damage", "damage" } }
+local function OnOff(v) return v and L.ON or L.OFF end
 
 -- How an ad was read, in words (/rbp chat test)
 function RBP:ChatAdSummary(ad)
-    local parts = { ad.kind == "lfm" and "a group recruiting" or "a player looking for a raid" }
+    local parts = { ad.kind == "lfm" and L.SUM_GROUP or L.SUM_PLAYER }
     local raids = {}
     for _, r in ipairs(ad.raids) do raids[#raids + 1] = RaidText(r, r.sizes) end
-    parts[#parts + 1] = "raid " .. table.concat(raids, ", ")
+    parts[#parts + 1] = format(L.SUM_RAID, table.concat(raids, ", "))
     local roles = {}
     if ad.anyRole then
-        roles[1] = "any role"
+        roles[1] = L.ANY_ROLE
     else
         for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
             local v = ad.roles[role]
             if type(v) == "number" then
-                roles[#roles + 1] = v .. " " .. ROLE_NAME[role][v > 1 and 2 or 1]
+                roles[#roles + 1] = v .. " " .. RBP.Plural(v, "ROLE_" .. role)
             elseif v then
-                roles[#roles + 1] = ROLE_NAME[role][1]
+                roles[#roles + 1] = L["ROLE_" .. role .. "_1"]
             end
         end
     end
-    if #roles > 0 then parts[#parts + 1] = (ad.kind == "lfm" and "needs " or "plays ") .. table.concat(roles, ", ") end
-    if ad.gs then parts[#parts + 1] = format("GearScore %.1fk", ad.gs / 1000) end
-    if ad.fill then parts[#parts + 1] = "members " .. ad.fill end
-    if ad.progress then parts[#parts + 1] = "progress " .. ad.progress end
+    if #roles > 0 then parts[#parts + 1] = format(ad.kind == "lfm" and L.SUM_NEEDS or L.SUM_PLAYS, table.concat(roles, ", ")) end
+    if ad.gs then parts[#parts + 1] = format(L.SUM_GS, ad.gs / 1000) end
+    if ad.fill then parts[#parts + 1] = format(L.SUM_MEMBERS, ad.fill) end
+    if ad.progress then parts[#parts + 1] = format(L.SUM_PROGRESS, ad.progress) end
     return table.concat(parts, "; ")
 end
 
@@ -760,15 +849,15 @@ function RBP:ChatStatus()
     table.sort(names)
     local channels
     if c.channels == "named" then
-        channels = #names > 0 and ("only channels: " .. table.concat(names, ", ")) or "no channels (none named)"
+        channels = #names > 0 and format(L.CHAT_ONLY_CHANNELS, table.concat(names, ", ")) or L.CHAT_NO_CHANNELS
     else
-        channels = "all public channels" .. (#names > 0 and (" except " .. table.concat(names, ", ")) or "")
+        channels = #names > 0 and format(L.CHAT_ALL_EXCEPT, table.concat(names, ", ")) or L.CHAT_ALL_CHANNELS
     end
     local n = 0
     for _ in pairs(self.chatAds) do n = n + 1 end
-    self:Print("chat ads %s: %s; yells %s; guild %s; groups recruiting (lfm) %s; players looking (lf) %s; "
-        .. "kept %d min after the last post; alerts %s (with Alert on new); %d ads now.", OnOff(c.enabled), channels,
-        OnOff(c.yell), OnOff(c.guild), OnOff(c.lfm), OnOff(c.lf), math.max(1, tonumber(c.expire) or 5), OnOff(c.alert), n)
+    self:Print(L.CHAT_STATUS, OnOff(c.enabled),
+        channels, OnOff(c.yell), OnOff(c.guild), OnOff(c.lfm), OnOff(c.lf), math.max(1, tonumber(c.expire) or 5),
+        OnOff(c.alert), self:ChatLanguageNames(), n)
 end
 
 function RBP:ChatCommand(rest)
@@ -781,13 +870,25 @@ function RBP:ChatCommand(rest)
         c[sub] = not c[sub]
     elseif sub == "channels" and (arg == "all" or arg == "named") then
         if c.channels ~= arg and next(c.list) then
-            self:Print("channel list cleared: it held the channels %s.", c.channels == "named" and "read" or "left out")
+            self:Print(c.channels == "named" and L.CHAT_LIST_CLEARED_READ or L.CHAT_LIST_CLEARED_LEFT)
             wipe(c.list) -- the list holds channels left out (all) or read (named)
         end
         c.channels = arg
     elseif sub == "channel" and arg ~= "" then
         local name = RBP.Lower(ChannelBase(arg))
         c.list[name] = (not c.list[name]) and true or nil
+    elseif sub == "lang" or sub == "language" or sub == "languages" then
+        if arg == "client" or arg == "default" then
+            c.languages = "client"
+            self:ApplyChatLanguages()
+        elseif arg ~= "" and not self:ToggleChatLanguage(arg) then
+            local codes = {}
+            for _, cd in ipairs(RBP.CHAT_LOCALE_ORDER) do codes[#codes + 1] = cd .. " (" .. L["LANG_" .. cd] .. ")" end
+            self:Print(L.CHAT_LANGS, table.concat(codes, ", "))
+            return
+        end
+        self:Print(L.CHAT_READ_IN, self:ChatLanguageNames())
+        return
     elseif sub == "expire" and tonumber(arg) then
         c.expire = math.min(60, math.max(1, floor(tonumber(arg))))
     elseif sub == "test" and arg ~= "" then
@@ -795,11 +896,10 @@ function RBP:ChatCommand(rest)
         local text = (rest or ""):match("^%S+%s+(.-)%s*$") or ""
         local ad = RBP.ParseAd(text)
         if not ad then
-            self:Print("not read as a raid ad: it names no raid, or reads as a sale, guild recruitment, a question "
-                .. "or chatter.")
+            self:Print(L.CHAT_TEST_NONE)
             return
         end
-        self:Print("read as %s.", self:ChatAdSummary(ad))
+        self:Print(L.CHAT_TEST_READ, self:ChatAdSummary(ad))
         local className, class = UnitClass("player")
         local me = self.playerName or UnitName("player")
         local rec = self:StoreChatAd(ad, text, me, "test", class, className)
@@ -807,19 +907,17 @@ function RBP:ChatCommand(rest)
         local why, forShown = nil, false
         for _, id in ipairs(e.raidIds) do if id == self.currentRaid then forShown = true end end
         if not (c.enabled and c[ad.kind] and self.db.filters.chat) then
-            why = "your chat ad settings hide this kind of ad"
+            why = L.CHAT_WHY_SETTINGS
         elseif self.mode ~= "all" and not forShown then
-            why = "it is for " .. table.concat(e.raidLabels, ", ") .. ", not the raid you are viewing"
+            why = format(L.CHAT_WHY_RAID, table.concat(e.raidLabels, ", "))
         elseif not self:PassesFilters(e) then
-            why = "the filters (players/groups, roles, item level, search) hide it"
+            why = L.CHAT_WHY_FILTERS
         end
-        if why then self:Print("it isn't in the list: %s.", why) end
+        if why then self:Print(L.CHAT_NOT_IN_LIST, why) end
         self:RequestRefresh()
         return
     elseif sub ~= "" then
-        self:Print("chat commands: /rbp chat [on|off|lfm|lf|yell|guild|alert], /rbp chat channels all|named, "
-            .. "/rbp chat channel <name> (leave out a channel, or with 'named' read it), /rbp chat expire <minutes>, "
-            .. "/rbp chat test <message> (shows how a message is read and lists it as your ad)")
+        self:Print(L.CHAT_HELP)
         return
     end
     self:PruneChatAds()

@@ -2,6 +2,21 @@
 
 local RBP = RaidBrowserPlus
 
+-- The texts are in the Locales folder, which came with an update. The game
+-- reads an addon's list of files only when it starts, so until a restart the
+-- addon stays off rather than failing.
+if not RBP.L then
+    RBP.needsRestart = true
+    local warn = CreateFrame("Frame")
+    warn:RegisterEvent("PLAYER_LOGIN")
+    warn:SetScript("OnEvent", function()
+        DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99Raid Browser+|r: this update added files, which the game loads only "
+            .. "when it starts. Quit and restart the game (a /reload isn't enough).")
+    end)
+    return
+end
+local L = RBP.L
+
 local ADDON_NAME = "raid-browser-plus" -- folder and .toc name
 local NO_RESPONSE_TIMEOUT = 5 -- no UPDATE_LFG_LIST after SearchLFGJoin -> warn
 local STALE_UPDATE_AGE = 25   -- silence that counts as stalled, once the realm is seen sending unchanged updates
@@ -46,6 +61,7 @@ local DEFAULTS = {
         guild = false,
         expire = 5,        -- minutes an ad stays after its last post
         alert = true,      -- new ads alert too, while "Alert on new" is on
+        languages = "client", -- words read besides English: the client's language, or { deDE = true, ... }
     },
     sort = { key = "ilvl", desc = true },
     alert = false,
@@ -55,8 +71,8 @@ local DEFAULTS = {
     showGearScore = false, -- your GearScore and item level in the footer
     collapsed = {},        -- details panel sections folded by the user
     templates = {
-        group = "Hi! {spec} {class}, {ilvl} ilvl - interested in your {raid} group.",
-        player = "Hi {name}! We're forming {raid} - would you like to join?",
+        group = L.TEMPLATE_GROUP,
+        player = L.TEMPLATE_PLAYER,
     },
     window = { width = 1040, height = 500, detailWidth = 270 },
 }
@@ -197,7 +213,7 @@ function RBP:BuildRaidList()
     for _, id in ipairs(order) do
         if id < 0 then
             local d = DungeonInfo(all, id)
-            local h = { id = id, name = d and d[1] or ("Raids " .. -id), raids = {} }
+            local h = { id = id, name = d and d[1] or format(L.RAIDS_N, -id), raids = {} }
             self.headers[#self.headers + 1] = h
             self.headerById[id] = h
         end
@@ -246,7 +262,7 @@ end
 
 function RBP:RaidLabel(id)
     local raid = self:GetRaid(id)
-    if not raid then return "Raid " .. tostring(id) end
+    if not raid then return format(L.RAID_N, tostring(id)) end
     if (raid.maxPlayers or 0) > 0 then
         return format("%s (%d)", raid.name, raid.maxPlayers)
     end
@@ -376,7 +392,7 @@ function RBP:ReadEntry(i, raidId)
         e.bosses = {}
         for k = 1, e.encTotal do
             local bossName, _, isKilled = SearchLFGGetEncounterResults(i, k)
-            e.bosses[k] = { name = bossName or ("Boss " .. k), killed = truthy(isKilled) }
+            e.bosses[k] = { name = bossName or format(L.BOSS_N, k), killed = truthy(isKilled) }
         end
     end
     return e
@@ -454,7 +470,7 @@ end
 
 function RBP:Derive(e)
     local raid = self:GetRaid(e.raidId)
-    e.raidName = raid and raid.name or ("Raid " .. tostring(e.raidId))
+    e.raidName = raid and raid.name or format(L.RAID_N, tostring(e.raidId))
     e.raidShort = self:RaidShort(e.raidId)
     e.maxPlayers = raid and raid.maxPlayers or 0
     e.isSelf = (e.name == self.playerName)
@@ -468,7 +484,9 @@ function RBP:Derive(e)
         if ad and (not ad.anyRole or ad.gs) then e.asks = ad end
     end
 
-    local parts = { e.name, e.className, e.specName or "", e.comment or "", e.area or "", e.raidName }
+    -- the spec in English and as the client names it, so either finds it
+    local parts = { e.name, e.className, e.specName or "", e.specName and RBP.SpecLabel(e.specName, e.class) or "",
+        e.comment or "", e.area or "", e.raidName }
 
     if e.isGroup then
         e.isRosterLeader = true -- the group entry doubles as the leader's roster row
@@ -583,8 +601,7 @@ function RBP:Snapshot(raidId, isJoinReply)
 
     if num > 0 and not self.layoutOK and not self.layoutWarned then
         self.layoutWarned = true
-        self:Print("this client's SearchLFGGetResults layout was not recognised; showing basic columns only. "
-            .. "Please run |cffffff00/rbp dump|r and report the output.")
+        self:Print(L.LAYOUT_UNKNOWN)
     end
 
     self:CheckSelfListing(raidId, entries)
@@ -1144,9 +1161,7 @@ function RBP:OnJoinLFGCalled()
         if self.joinWatch ~= token then return end
         self.joinWatch = nil
         if not self.joinWatchResponse and GetLFGMode() ~= "listed" then
-            self:Print("the server did not confirm the Raid Browser sign-up. If no error was shown: "
-                .. "only the group leader can list a group, dungeon-finder groups cannot be listed, "
-                .. "a solo sign-up needs a role, and the realm may have the Raid Browser disabled.")
+            self:Print(L.SIGNUP_NO_REPLY)
         end
     end)
 end
@@ -1164,9 +1179,9 @@ function RBP:AlertNew(list)
     if #hits == 0 then return end
     if self.db.alertSound then PlaySound("ReadyCheck") end
     for i = 1, min(#hits, 3) do
-        self:Print("new in |cffffd100%s|r: %s", self:RaidLabel(hits[i].raidId), self:Describe(hits[i]))
+        self:Print(L.ALERT_NEW, "|cffffd100" .. self:RaidLabel(hits[i].raidId) .. "|r", self:Describe(hits[i]))
     end
-    if #hits > 3 then self:Print("... and %d more.", #hits - 3) end
+    if #hits > 3 then self:Print(L.ALERT_MORE, #hits - 3) end
 end
 
 function RBP:Describe(e)
@@ -1174,11 +1189,12 @@ function RBP:Describe(e)
     local who = format("|cff%s|Hplayer:%s|h[%s]|h|r", cc, e.name, e.name)
     local bits = {}
     if e.isGroup then
-        bits[#bits + 1] = format("group %d/%d", e.size or 1, e.maxPlayers or 0)
+        bits[#bits + 1] = format(L.GROUP_SIZE, e.size or 1, e.maxPlayers or 0)
     else
-        bits[#bits + 1] = ((e.specName and e.specName ~= "Hybrid") and (e.specName .. " ") or "") .. (e.className or "")
+        bits[#bits + 1] = (e.specName and e.specName ~= "Hybrid")
+            and RBP.SpecClass(RBP.SpecLabel(e.specName, e.class), e.className or "") or (e.className or "")
     end
-    if e.ilvl then bits[#bits + 1] = format("%.0f ilvl", e.ilvl) end
+    if e.ilvl then bits[#bits + 1] = format(L.ILVL_N, e.ilvl) end
     local s = who .. " (" .. table.concat(bits, ", ") .. ")"
     if e.comment and e.comment ~= "" then s = s .. " - " .. e.comment end
     return s
@@ -1277,7 +1293,7 @@ function RBP:PlayerSpec()
     return spec, className, role
 end
 
-local ROLE_WORD = { TANK = "tank", HEALER = "healer", DAMAGER = "dps" }
+local ROLE_WORD = { TANK = L.ROLE_WORD_TANK, HEALER = L.ROLE_WORD_HEALER, DAMAGER = L.ROLE_WORD_DAMAGER }
 
 -- A listing's raid as a short code, size and whether it is a heroic run
 -- ("ICC", 25, true), for chat ads too.
@@ -1346,8 +1362,8 @@ function RBP:FormatTemplate(kind, e, noLinks)
         vals.achi = (not noLinks and self:AchievementLink(self:EntryRaid(e))) or ""
     end
     local out = t:gsub("{(%w+)}", function(k) return vals[k] or ("{" .. k .. "}") end)
-    -- an empty token can leave doubled or edge spaces
-    out = out:gsub("%s%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    -- an empty token can leave empty brackets, or doubled or edge spaces
+    out = out:gsub("%(%s*%)", ""):gsub("%s%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
     return out
 end
 
@@ -1479,13 +1495,13 @@ function RBP:Dump(limit)
     end
     for _, l in ipairs(lines) do DEFAULT_CHAT_FRAME:AddMessage(l) end
     self.db.lastDump = { time = date("%Y-%m-%d %H:%M:%S"), lines = lines }
-    self:Print("dump saved to SavedVariables (RaidBrowserPlusDB.lastDump) at next /reload or logout.")
+    self:Print(L.DUMP_SAVED)
 end
 
 ---------------------------------------------------------------------------
 -- Slash commands
 ---------------------------------------------------------------------------
-local function OnOff(v) return v and "|cff40ff40on|r" or "|cffff4040off|r" end
+local function OnOff(v) return v and ("|cff40ff40" .. L.ON .. "|r") or ("|cffff4040" .. L.OFF .. "|r") end
 
 function RBP:Slash(msg)
     msg = strtrim(msg or "")
@@ -1507,19 +1523,17 @@ function RBP:Slash(msg)
             local n = 0
             for _ in pairs(self.hidden) do n = n + 1 end
             self:UnhideAll()
-            self:Print("%d hidden entr%s shown again.", n, n == 1 and "y" or "ies")
+            self:Print(L.HIDDEN_CLEARED, n)
         else
             self.showHidden = not self.showHidden or nil
             self:RequestRefresh()
-            self:Print("hidden entries are %s (/rbp hidden clear shows them all again for good).",
-                self.showHidden and "shown, dimmed" or "hidden")
+            self:Print(self.showHidden and L.HIDDEN_SHOWN or L.HIDDEN_HIDDEN)
         end
     elseif cmd == "options" or cmd == "config" then
         if self.Options then
             self.Options:Open()
         else
-            self:Print("the options panel isn't loaded. Quit and restart the game (a /reload isn't enough after "
-                .. "an update that adds files).")
+            self:Print(L.OPTIONS_NOT_LOADED)
         end
     elseif cmd == "chat" then
         if self.ChatCommand then
@@ -1527,44 +1541,43 @@ function RBP:Slash(msg)
         else
             -- Chat.lua is a file added in an update: the game reads the list
             -- of an addon's files only when it starts, not on /reload
-            self:Print("chat ads aren't loaded. Quit and restart the game (a /reload isn't enough after "
-                .. "an update that adds files), and check that Chat.lua is in the addon's folder.")
+            self:Print(L.CHAT_NOT_LOADED)
         end
     elseif cmd == "gs" or cmd == "gearscore" then
         self.db.showGearScore = not self.db.showGearScore
         self:RequestRefresh()
-        self:Print("your GearScore and item level are %s in the footer.", self.db.showGearScore and "shown" or "hidden")
+        self:Print(self.db.showGearScore and L.GS_SHOWN or L.GS_HIDDEN)
     elseif cmd == "allstats" then
         self:SetShowAllStats(not self.db.showAllStats)
-        self:Print("details show %s.", self.db.showAllStats and "every stat" or "only the stats relevant to class and spec")
+        self:Print(self.db.showAllStats and L.ALLSTATS_ON or L.ALLSTATS_OFF)
     elseif cmd == "scope" then
         local m = rest:lower()
         if m == "all" or m == "level" then
             self.db.scanScope = m
             self:RequestRefresh()
         end
-        self:Print("scan scope: %s (level = raids you can enter at your level, all = every raid).", self.db.scanScope)
+        self:Print(L.SCOPE_IS, self.db.scanScope)
     elseif cmd == "alert" then
         self:SetAlert(not self.db.alert)
-        self:Print("alerts %s.", OnOff(self.db.alert))
+        self:Print(L.ALERTS_ARE, OnOff(self.db.alert))
     elseif cmd == "sound" then
         self.db.alertSound = not self.db.alertSound
-        self:Print("alert sound %s.", OnOff(self.db.alertSound))
+        self:Print(L.ALERT_SOUND_IS, OnOff(self.db.alertSound))
     elseif cmd == "ignored" then
         self.db.filters.hideIgnored = not self.db.filters.hideIgnored
-        self:Print("hide ignored players %s.", OnOff(self.db.filters.hideIgnored))
+        self:Print(L.HIDE_IGNORED_IS, OnOff(self.db.filters.hideIgnored))
         self:RequestRefresh()
     elseif cmd == "template" then
         local kind, text = rest:match("^(%S+)%s*(.-)$")
         kind = kind and kind:lower()
         if (kind == "group" or kind == "player") and text and text ~= "" then
             self.db.templates[kind] = text
-            self:Print("%s template set.", kind)
+            self:Print(kind == "group" and L.TEMPLATE_SET_GROUP or L.TEMPLATE_SET_PLAYER)
         else
-            self:Print("templates (tokens: {name} {raid} {spec} {class} {ilvl} {gs} {role} {achi}):")
-            self:Print("  group: %s", self.db.templates.group)
-            self:Print("  player: %s", self.db.templates.player)
-            self:Print("set with /rbp template group|player <text>")
+            self:Print(L.TEMPLATES_HEADER)
+            self:Print(L.TEMPLATES_GROUP, self.db.templates.group)
+            self:Print(L.TEMPLATES_PLAYER, self.db.templates.player)
+            self:Print(L.TEMPLATES_HOW)
         end
     elseif cmd == "reset" then
         wipe(self.db)
@@ -1576,17 +1589,10 @@ function RBP:Slash(msg)
         -- alerts are off again: with the window closed, stop browsing too
         if not (self.UI and self.UI:IsShown()) then self:OnWindowHidden() end
         self:RequestRefresh()
-        self:Print("settings reset.")
+        self:Print(L.SETTINGS_RESET)
     else
-        self:Print("commands:")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp - toggle the window   /rbp scan - all raids / load the next raid")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp options - the settings in Interface > AddOns > Raid Browser+")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp alert - toggle new-listing alerts   /rbp sound - alert sound")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp template [group|player <text>] - whisper templates")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp scope level|all   /rbp ignored   /rbp allstats   /rbp gs - your GearScore")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp hidden [clear] - show entries you hid (right-click > Hide), or bring them all back")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp chat - raid ads from chat (/rbp chat help for its options)")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp dump [n] - print raw API returns   /rbp reset")
+        self:Print(L.HELP_HEADER)
+        for i = 1, 8 do DEFAULT_CHAT_FRAME:AddMessage(L["HELP_" .. i]) end
     end
 end
 
@@ -1661,7 +1667,7 @@ function RBP:OnEvent(event, arg1, arg2)
         self:RequestLockouts()
         if self.db.alert then
             -- Browsing needs a click or key press, so it can't resume on its own.
-            self:Print("alerts are on; open the window (/rbp) to start watching.")
+            self:Print(L.ALERTS_ON_LOGIN)
         end
     elseif event == "UPDATE_LFG_LIST" then
         self:OnListUpdate()
@@ -1687,5 +1693,5 @@ SLASH_RAIDBROWSERPLUS2 = "/raidbrowser"
 SlashCmdList["RAIDBROWSERPLUS"] = function(msg) RBP:Slash(msg) end
 
 BINDING_HEADER_RAIDBROWSERPLUS = "Raid Browser+"
-BINDING_NAME_RAIDBROWSERPLUS_TOGGLE = "Toggle Raid Browser+"
-BINDING_NAME_RAIDBROWSERPLUS_NEXT = "Load next raid / refresh"
+BINDING_NAME_RAIDBROWSERPLUS_TOGGLE = L.BINDING_TOGGLE
+BINDING_NAME_RAIDBROWSERPLUS_NEXT = L.BINDING_NEXT

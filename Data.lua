@@ -91,8 +91,9 @@ for class, specs in pairs(RBP.SPECS) do
     end
 end
 
+-- The client's own names for each power type, so they follow its language.
 RBP.POWER_LABEL = {
-    WARRIOR = "Rage", DEATHKNIGHT = "Runic power", ROGUE = "Energy",
+    WARRIOR = RAGE or "Rage", DEATHKNIGHT = RUNIC_POWER or "Runic power", ROGUE = ENERGY or "Energy",
 }
 
 -- Lowercase for searching and sorting. string.lower only changes A-Z, so also
@@ -313,8 +314,8 @@ end
 ---------------------------------------------------------------------------
 -- Achievements for {achi} in whisper templates, best first. Each tier holds
 -- the 10- and 25-player achievement and their English names, used to check
--- the ids on English clients. Ids and names checked against the AzerothCore
--- WotLK database (wowgaming.altervista.org/aowow).
+-- the ids on English clients. Ids and names checked against a 3.3.5
+-- achievement database.
 ---------------------------------------------------------------------------
 local function Tier(id10, id25, name10, name25)
     return { [10] = id10, [25] = id25,
