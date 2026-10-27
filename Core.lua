@@ -43,7 +43,7 @@ local DEFAULTS = {
         group = "Hi! {spec} {class}, {ilvl} ilvl - interested in your {raid} group.",
         player = "Hi {name}! We're forming {raid} - would you like to join?",
     },
-    window = { width = 1040, height = 500 },
+    window = { width = 1040, height = 500, detailWidth = 270 },
 }
 
 ---------------------------------------------------------------------------

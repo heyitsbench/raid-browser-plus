@@ -6,7 +6,10 @@ RBP.UI = UI
 
 local ROW_H = 18
 local HEADER_H = 18
-local DETAIL_W = 270
+local DETAIL_W = 270    -- default and narrowest width of the details pane
+local DETAIL_MAX = 500
+local GAP = 6           -- between the list and the details; holds the drag handle
+local LIST_CHROME = 34  -- list frame width not available to columns (insets, scroll bar)
 local PAD = 10
 local FOOTER_H = 24
 local CONTENT_BOTTOM = FOOTER_H + 14
@@ -30,6 +33,13 @@ local COLUMNS = {
 }
 local MIN_WIDTH = 920
 local COL_GAP = 6
+-- Narrowest column area the list needs: optional columns dropped, the comment
+-- at its minimum, the Raid column counted (so the limit is the same in both views).
+local LIST_MIN = 0
+for _, col in ipairs(COLUMNS) do
+    if not col.optional then LIST_MIN = LIST_MIN + (col.flex and col.min or col.width) + COL_GAP end
+end
+local contentW = DETAIL_W - 46 -- usable width inside the details scroll area
 local DEFAULT_DESC = { ilvl = true, level = true, prog = false }
 
 ---------------------------------------------------------------------------
@@ -669,6 +679,71 @@ function UI:CreateDetails()
         return "Opens a whisper you can edit before sending:\n|cffffffff" .. RBP:FormatTemplate(e.isGroup and "group" or "player", e)
             .. "|r\n\nChange it with /rbp template " .. (e.isGroup and "group" or "player") .. " <text>."
     end)
+
+    -- Drag handle in the gap between the list and the details pane.
+    local split = CreateFrame("Button", nil, f)
+    split:SetWidth(GAP + 2)
+    split:SetPoint("TOPRIGHT", d, "TOPLEFT", 1, 0)
+    split:SetPoint("BOTTOMRIGHT", d, "BOTTOMLEFT", 1, 0)
+    split:SetFrameLevel(d:GetFrameLevel() + 2)
+    split:EnableMouse(true)
+    split.grip = split:CreateTexture(nil, "OVERLAY")
+    split.grip:SetTexture(1, 0.82, 0, 1)
+    split.grip:SetWidth(2)
+    split.grip:SetHeight(32)
+    split.grip:SetPoint("CENTER", 0, 0)
+    split.grip:SetAlpha(0.3)
+    local function cursorX() return GetCursorPosition() / f:GetEffectiveScale() end
+    local function stopDrag(s)
+        s.dragging = false
+        s:SetScript("OnUpdate", nil)
+        s.grip:SetAlpha(s.hover and 0.9 or 0.3)
+        RBP:RequestRefresh()
+    end
+    split:SetScript("OnEnter", function(s)
+        s.hover = true
+        s.grip:SetAlpha(0.9)
+        if s.dragging then return end
+        GameTooltip:SetOwner(s, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Resize details", 1, 1, 1)
+        GameTooltip:AddLine("Drag to widen or narrow the details pane. Double-click to reset.", 1, 0.82, 0, true)
+        GameTooltip:Show()
+    end)
+    split:SetScript("OnLeave", function(s)
+        s.hover = false
+        if not s.dragging then s.grip:SetAlpha(0.3) end
+        GameTooltip:Hide()
+    end)
+    split:SetScript("OnMouseDown", function(s, button)
+        if button ~= "LeftButton" then return end
+        GameTooltip:Hide()
+        s.dragging, s.startX, s.startW = true, cursorX(), UI.detailW
+        s:SetScript("OnUpdate", function(handle)
+            -- the details pane is anchored on the right, so dragging left widens it
+            UI:SetDetailWidth(handle.startW + (handle.startX - cursorX()))
+            if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then stopDrag(handle) end
+        end)
+    end)
+    split:SetScript("OnMouseUp", function(s) if s.dragging then stopDrag(s) end end)
+    split:SetScript("OnDoubleClick", function() UI:SetDetailWidth(DETAIL_W) end)
+    d.split = split
+end
+
+-- Width the details pane gets in a window of width frameW: the wanted width,
+-- held between DETAIL_W and DETAIL_MAX and narrowed so the list keeps LIST_MIN.
+function UI:DetailWidthFor(frameW, want)
+    local room = floor(frameW - 2 * PAD - GAP - LIST_CHROME - LIST_MIN)
+    return max(DETAIL_W, math.min(floor((want or DETAIL_W) + 0.5), DETAIL_MAX, room))
+end
+
+-- Set the details pane width (saved with the window) and lay out again.
+function UI:SetDetailWidth(w)
+    w = self:DetailWidthFor(self.frame:GetWidth(), w)
+    RBP.db.window.detailWidth = w
+    if w ~= self.detailW then
+        self:Layout()
+        RBP:RequestRefresh()
+    end
 end
 
 function UI:CreateFooter()
@@ -734,15 +809,26 @@ function UI:Layout()
     if not f then return end
     local top = self.banner:IsShown() and -118 or -92
 
+    -- details pane: saved width, narrowed if the window is too small for it
+    local d = self.detail
+    local dw = self:DetailWidthFor(f:GetWidth(), RBP.db.window.detailWidth)
+    self.detailW, contentW = dw, dw - 46
+    d:SetWidth(dw)
+    d.child:SetWidth(dw - 44)
+    local bw = floor((dw - 24) / 3)
+    d.whisper:SetWidth(bw)
+    d.invite:SetWidth(bw)
+    d.ask:SetWidth(bw)
+
     self.list:ClearAllPoints()
     self.list:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, top)
-    self.list:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(PAD + DETAIL_W + 6), CONTENT_BOTTOM)
-    self.detail:ClearAllPoints()
-    self.detail:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD, top)
-    self.detail:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -PAD, CONTENT_BOTTOM)
+    self.list:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(PAD + dw + GAP), CONTENT_BOTTOM)
+    d:ClearAllPoints()
+    d:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD, top)
+    d:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -PAD, CONTENT_BOTTOM)
 
     -- columns
-    local width = (f:GetWidth() - 2 * PAD - DETAIL_W - 6) - 10 - 24
+    local width = (f:GetWidth() - 2 * PAD - dw - GAP) - LIST_CHROME
     local function compute(dropLevel)
         local cols, fixed = {}, 0
         for _, col in ipairs(COLUMNS) do
@@ -1036,7 +1122,6 @@ end
 -- value rows, a two-column stat grid, wrapped text); RenderDetail lays it out
 -- with pooled font strings so labels (gold) and values (white) line up.
 ---------------------------------------------------------------------------
-local CONTENT_W = DETAIL_W - 46
 local PER_LISTING = { stats = true } -- a solo player's Stats opens again for each listing
 local MEMBER_INDENT = 14
 local CELL_H = 14
@@ -1274,7 +1359,7 @@ function UI:DetailBlocks(e)
             local il = isLeader and e.leaderIlvl or m.ilvl
             local open = self:IsExpanded(m)
             row(left, il and Col(RBP.ItemLevelColor(il), format("%d", floor(il + 0.5))) or Col(C.dim, "-"),
-                { plain = true, split = CONTENT_W - 30, icon = true, toggle = m.name, expanded = open })
+                { plain = true, split = contentW - 30, icon = true, toggle = m.name, expanded = open })
             if not skip and open then
                 local unknownZone = UNKNOWN or "Unknown"
                 if m.area and m.area ~= "" and m.area ~= unknownZone then
@@ -1370,7 +1455,7 @@ function UI:RenderDetail(blocks)
         end
         fs:ClearAllPoints()
         fs:SetPoint("TOPLEFT", child, "TOPLEFT", x, -y)
-        fs:SetWidth(CONTENT_W - x)
+        fs:SetWidth(contentW - x)
         fs:SetText(value)
         fs:Show()
         return fs:GetHeight()
@@ -1421,7 +1506,7 @@ function UI:RenderDetail(blocks)
         end
         h:ClearAllPoints()
         h:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
-        h:SetWidth(CONTENT_W)
+        h:SetWidth(contentW)
         h.key, h.collapsed = b.key, b.collapsed
         h.icon:SetTexture(b.collapsed and "Interface\\Buttons\\UI-PlusButton-Up" or "Interface\\Buttons\\UI-MinusButton-Up")
         if b.key then h.icon:Show(); h:Enable() else h.icon:Hide(); h:Disable() end
@@ -1475,7 +1560,7 @@ function UI:RenderDetail(blocks)
         end
         r:ClearAllPoints()
         r:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
-        r:SetWidth(CONTENT_W)
+        r:SetWidth(contentW)
         r.key, r.expanded = b.toggle, b.expanded
         r.icon:SetTexture(b.expanded and "Interface\\Buttons\\UI-MinusButton-Up" or "Interface\\Buttons\\UI-PlusButton-Up")
         r:Show()
@@ -1506,7 +1591,7 @@ function UI:RenderDetail(blocks)
         end
         t:ClearAllPoints()
         t:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
-        t:SetWidth(CONTENT_W)
+        t:SetWidth(contentW)
         t:Show()
     end
 
@@ -1526,15 +1611,15 @@ function UI:RenderDetail(blocks)
             end
             if b.split then
                 Cell(GameFontHighlightSmall, x0, y, b.split - x0, "LEFT", b.label)
-                Cell(GameFontHighlightSmall, b.split, y, CONTENT_W - b.split, "RIGHT", b.value)
+                Cell(GameFontHighlightSmall, b.split, y, contentW - b.split, "RIGHT", b.value)
             else
-                Pair(b.plain and GameFontHighlightSmall or GameFontNormalSmall, x0, y, CONTENT_W - x0, b.label, b.value)
+                Pair(b.plain and GameFontHighlightSmall or GameFontNormalSmall, x0, y, contentW - x0, b.label, b.value)
             end
             if b.indent then Guide(y, y + CELL_H) end
             y = y + CELL_H
         elseif b.kind == "grid" then
             local x0 = b.indent or 0
-            local width = CONTENT_W - x0
+            local width = contentW - x0
             local cw = floor((width - GRID_GAP) / 2)
             local top = y
             local col = 0
