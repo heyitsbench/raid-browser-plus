@@ -57,7 +57,8 @@ local ROLE_WORDS = {
 local SIZES = { ["10"] = 10, ["25"] = 25, ["20"] = 20, ["40"] = 40 }
 local HEROIC = { hc = true, h = true, heroic = true, hero = true, mhc = true, manhc = true }
 local NORMAL = { nm = true, n = true, normal = true, norm = true, mnm = true, mannm = true }
-local SALES = { wts = true, wtb = true, wtt = true, selling = true, buying = true }
+local SALES = { wts = true, wtb = true, wtt = true, selling = true, buying = true, sell = true, buy = true,
+    boost = true, boosts = true, boosting = true }
 local ARTICLES = { a = true, an = true, the = true, some = true, any = true }
 local GROUP_WORDS = { raid = true, raids = true, group = true, grp = true, run = true, runs = true, team = true }
 local RESERVE_WORDS = { res = true, ress = true, reserved = true, reserve = true, reserverd = true, resserved = true, hr = true }
@@ -83,6 +84,14 @@ local NEED_WORDS = { need = true, needs = true, needed = true }
 local ASKING_WORDS = { i = true, u = true, you = true, ya = true, ["do"] = true, does = true, did = true, how = true,
     what = true, wat = true, where = true, why = true, should = true, ["if"] = true }
 local OFFER_WORDS = { anyone = true, any1 = true, anybody = true, someone = true, some1 = true, somebody = true, who = true }
+-- past tense and the like: someone telling about a raid, not advertising one
+local STORY_WORDS = { was = true, were = true, had = true, did = true, didnt = true, ["didn't"] = true,
+    yesterday = true, ago = true, wiped = true, used = true }
+-- words of a sentence rather than an ad
+local SENTENCE_WORDS = { is = true, are = true, am = true, it = true, its = true, ["it's"] = true, they = true,
+    ["they're"] = true, you = true, your = true, ["you're"] = true, i = true, ["i'm"] = true, im = true, my = true,
+    would = true, should = true, could = true, think = true, because = true, than = true, but = true, ["if"] = true,
+    so = true, really = true, lol = true }
 local SIZE_FILLER = { m = true, man = true, player = true, ppl = true, er = true, full = true, only = true, fresh = true }
 -- "guild run" and "with guildies" are pickup raids; other "guild..." is recruitment
 local GUILD_OK = { guildie = true, guildies = true, guildmate = true, guildmates = true }
@@ -462,9 +471,22 @@ function RBP.ParseAd(msg)
                 if INV_ASKING[nextWord or ""] then askingInvite = true else invites = true end
             end
         end
+        -- Talk about raids, not an ad: "most EoE 10 raids didn't do any HR on
+        -- the ring". Only these weak signs give way to it.
+        local story = false
+        for w in pairs(has) do if STORY_WORDS[w] then story = true end end
+        -- reserved items count when the ad also asks for a GearScore
+        -- ("FAST RUN 5,5K GS + B/P/O RESS"); "HR" alone is just as often talk
+        local reservedAd = reserved and ParseGS(s) ~= nil
+        -- Role counts and reserves alone read as an ad only in ad shorthand
+        -- ("TOC 10 NM 1 TANK 1 HEAL"), not in a sentence ("icc is easier
+        -- with 3 heals").
+        local sentence = false
+        for w in pairs(has) do if SENTENCE_WORDS[w] then sentence = true end end
         if askingInvite then
             kind = "lf"
-        elseif counted or needAll or invites or whisper or fill or reserved then
+        elseif not story and (needAll or invites or whisper or fill
+            or (not sentence and (counted or reservedAd))) then
             kind = "lfm"
         end
     end
