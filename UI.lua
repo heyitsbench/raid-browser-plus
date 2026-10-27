@@ -144,8 +144,13 @@ end
 local function Col(hex, s) return "|cff" .. hex .. tostring(s) .. "|r" end
 
 -- Marks after a name: also advertising in chat, you whispered them (waiting),
--- they whispered you.
+-- they whispered you, your note on them, your blacklist (for a group: anyone
+-- in it).
 local WAITING_ICON, REPLIED_ICON = "Interface\\RaidFrame\\ReadyCheck-Waiting", "Interface\\RaidFrame\\ReadyCheck-Ready"
+local NOTE_ICON = "Interface\\FriendsFrame\\UI-FriendsFrame-Note"
+local BLACKLIST_ICON = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8"
+RBP.NOTE_ICON_TEXT = "|T" .. NOTE_ICON .. ":12:12|t"
+RBP.BLACKLIST_ICON_TEXT = "|T" .. BLACKLIST_ICON .. ":12:12|t"
 local function NameMarks(e)
     local t = ""
     if e.chatAd then t = t .. " |T" .. RBP.CHAT_ICON .. ":11:11|t" end
@@ -154,6 +159,11 @@ local function NameMarks(e)
         -- the latest whisper decides: theirs is a reply, yours waits for one
         local replied = c.received and c.received >= (c.sent or 0)
         t = t .. " |T" .. (replied and REPLIED_ICON or WAITING_ICON) .. ":11:11|t"
+    end
+    local n = RBP:PlayerNote(e.name)
+    if n and n.note then t = t .. " |T" .. NOTE_ICON .. ":11:11|t" end
+    if (n and n.black) or (e.isGroup and #RBP:BlacklistedIn(e) > 0) then
+        t = t .. " |T" .. BLACKLIST_ICON .. ":11:11|t"
     end
     return t
 end
@@ -190,7 +200,7 @@ local function EntryKey(e) return RBP:EntryKey(e) end
 
 local function NameColor(e)
     if e.isSelf then return C.dim end
-    if e.relation == "ignored" then return C.bad end
+    if e.relation == "ignored" or RBP:IsBlacklisted(e.name) then return C.bad end
     if e.relation == "friend" then return C.good end
     if e.relation == "guild" then return "40c8ff" end
     return e.isGroup and "ffd100" or "ffffff"
@@ -249,6 +259,60 @@ end
 
 local function CanInvite(e)
     return not e.isGroup and not e.isSelf and (not CanGroupInvite or CanGroupInvite())
+end
+
+-- Your note and blacklist mark on a player, as tooltip lines
+local function AddNoteLines(name)
+    local n = RBP:PlayerNote(name)
+    if not n then return end
+    if n.black then GameTooltip:AddLine(RBP.BLACKLIST_ICON_TEXT .. " " .. L.BLACKLISTED, 1, 0.25, 0.25) end
+    if n.note then GameTooltip:AddLine(RBP.NOTE_ICON_TEXT .. " " .. n.note, 1, 0.82, 0, true) end
+end
+
+-- A group's gaps in words: "1 tank, 2 healers"; utilities it lacks, or all
+-- of them with their state (details)
+local function GapRolesText(g)
+    if g.open == 0 then return L.GAP_FULL end
+    local t = {}
+    for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+        local n = g.roles[role]
+        if n > 0 then t[#t + 1] = n .. " " .. RBP.Plural(n, "ROLE_" .. role) end
+    end
+    local s = #t > 0 and table.concat(t, ", ") or L.GAP_ROLES_OK
+    if g.unknown > 0 then s = s .. " " .. format(L.GAP_UNKNOWN, g.unknown) end
+    return s
+end
+
+local function UtilityName(key)
+    if key == "lust" then
+        local horde = UnitFactionGroup and UnitFactionGroup("player") == "Horde"
+        return (GetSpellInfo and GetSpellInfo(horde and 2825 or 32182)) or (horde and "Bloodlust" or "Heroism")
+    elseif key == "repl" then
+        return (GetSpellInfo and GetSpellInfo(57669)) or "Replenishment"
+    end
+    return L.GAP_BREZ
+end
+RBP.UtilityName = UtilityName
+
+local function GapUtilityText(g, missingOnly)
+    local t = {}
+    for _, key in ipairs({ "lust", "brez", "repl" }) do
+        local state, name = g[key], UtilityName(key)
+        if state == "no" then t[#t + 1] = Col(C.bad, format(L.GAP_NO, name))
+        elseif not missingOnly then
+            t[#t + 1] = state == "yes" and Col(C.good, name) or Col(C.dim, format(L.GAP_MAYBE, name))
+        end
+    end
+    return table.concat(t, ", ")
+end
+
+local function YouAddText(add)
+    local t = {}
+    if add.role then t[#t + 1] = L["ROLE_" .. add.role .. "_1"] end
+    for _, key in ipairs({ "lust", "brez", "repl" }) do
+        if add[key] then t[#t + 1] = UtilityName(key) end
+    end
+    return table.concat(t, ", ")
 end
 
 ---------------------------------------------------------------------------
@@ -463,6 +527,27 @@ function UI:CreateToolbar()
     SetTip(hidden, L.HIDDEN_TITLE, L.HIDDEN_TIP)
     hidden:Hide()
     self.hiddenButton = hidden
+
+    -- shown while players in the list have replied to you (the green check)
+    local invite = NewButton("RaidBrowserPlusInviteRepliesButton", f, "", 110, 20)
+    invite:SetScript("OnClick", function() RBP:InviteReplies(UI.viewList) end)
+    SetTip(invite, L.INVITE_REPLIES_TITLE, function()
+        return format(L.INVITE_REPLIES_TIP, table.concat(UI.inviteNames or {}, ", "))
+    end)
+    invite:Hide()
+    self.inviteButton = invite
+end
+
+function UI:UpdateInviteButton()
+    local b = self.inviteButton
+    if not b then return end
+    local names = RBP:CanInviteNow() and RBP:RepliedPlayers(self.viewList) or {}
+    self.inviteNames = names
+    if #names == 0 then b:Hide(); return end
+    FitButton(b, format(L.INVITE_REPLIES, #names))
+    b:ClearAllPoints()
+    b:SetPoint("LEFT", self.hiddenButton:IsShown() and self.hiddenButton or self.search, "RIGHT", 10, 0)
+    b:Show()
 end
 
 function UI:UpdateHiddenButton()
@@ -1105,6 +1190,7 @@ function UI:Refresh()
     self:UpdateFooter()
     self:UpdateStatus()
     self:UpdateHiddenButton()
+    self:UpdateInviteButton()
     self:UpdateDropdownText()
     self:SyncFilters()
     FitButton(self.refresh, RBP.mode == "all" and L.NEXT_RAID or (REFRESH or "Refresh"))
@@ -1305,6 +1391,7 @@ function UI:ShowChatTooltip(owner, e)
     if ad.gs then GameTooltip:AddLine(format(L.TIP_GEARSCORE, GSText(ad.gs) .. (e.isGroup and "+" or "")), 1, 1, 1) end
     local contact = RBP:Contact(e.name)
     if contact then GameTooltip:AddLine(ContactText(contact, AgoText), 0.6, 0.8, 1) end
+    AddNoteLines(e.name)
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(e.comment, 1, 1, 1, true)
     GameTooltip:Show()
@@ -1326,6 +1413,11 @@ function UI:ShowEntryTooltip(owner, e)
             GameTooltip:AddLine(format(L.TIP_ASKS_FOR, table.concat(t, ", ")), 1, 1, 1)
         end
         if e.ilvl then GameTooltip:AddLine(format(L.TIP_AVG_ILVL, FmtIlvl(e.ilvl)), 1, 1, 1) end
+        local g = RBP:GroupGaps(e)
+        if g and g.open > 0 then
+            local missing = GapUtilityText(g, true)
+            GameTooltip:AddLine(format(L.TIP_MISSING, GapRolesText(g) .. (missing ~= "" and ("; " .. missing) or "")), 1, 1, 1, true)
+        end
     else
         GameTooltip:AddLine(format(L.TIP_LEVEL, e.level, SpecText(e), e.talentString and ("  (" .. e.talentString .. ")") or ""), 1, 1, 1)
         if e.ilvl then GameTooltip:AddLine(format(L.TIP_ILVL, FmtIlvl(e.ilvl)), 1, 1, 1) end
@@ -1354,7 +1446,18 @@ function UI:ShowEntryTooltip(owner, e)
         end
     end
     local contact = RBP:Contact(e.name)
-    if contact or IsNew(e) then GameTooltip:AddLine(" ") end
+    local note = RBP:PlayerNote(e.name)
+    local black = {}
+    for _, n in ipairs(e.isGroup and RBP:BlacklistedIn(e) or {}) do
+        if n ~= e.name then black[#black + 1] = n end -- the leader's own line comes below
+    end
+    if #black > 0 then
+        -- blacklisted members of the group
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine(RBP.BLACKLIST_ICON_TEXT .. " " .. format(L.TIP_BLACKLISTED_IN, table.concat(black, ", ")), 1, 0.25, 0.25, true)
+    end
+    if contact or IsNew(e) or note then GameTooltip:AddLine(" ") end
+    AddNoteLines(e.name)
     if contact then GameTooltip:AddLine(ContactText(contact, AgoText), 0.6, 0.8, 1) end
     if IsNew(e) then
         GameTooltip:AddLine(format(L.TIP_FIRST_SEEN, AgoText(GetTime() - e.firstSeen)), 0.25, 1, 0.45)
@@ -1376,9 +1479,51 @@ function UI:OpenMenu(e)
             and { text = L.MENU_SHOW_AGAIN, notCheckable = true, func = function() RBP:UnhideEntry(e) end }
             or { text = e.isChat and L.MENU_HIDE_AD or L.MENU_HIDE_LISTING, notCheckable = true,
                  func = function() RBP:HideEntry(e) end },
+        { text = (RBP:PlayerNote(e.name) or {}).note and L.MENU_NOTE_EDIT or L.MENU_NOTE_ADD, notCheckable = true,
+          disabled = e.isSelf, func = function() UI:EditNote(e.name) end },
+        { text = RBP:IsBlacklisted(e.name) and L.MENU_UNBLACKLIST or L.MENU_BLACKLIST, notCheckable = true,
+          disabled = e.isSelf, func = function() RBP:SetBlacklisted(e.name, not RBP:IsBlacklisted(e.name)) end },
         { text = CANCEL or "Cancel", notCheckable = true, func = function() CloseDropDownMenus() end },
     }
     EasyMenu(menu, self.menuFrame, "cursor", 0, 0, "MENU")
+end
+
+-- A note on a player, in a box like the friends list's note
+function UI:EditNote(name)
+    if not StaticPopupDialogs.RAIDBROWSERPLUS_NOTE then
+        local function save(dialog)
+            RBP:SetPlayerNote(dialog.data, dialog.wideEditBox:GetText())
+        end
+        StaticPopupDialogs.RAIDBROWSERPLUS_NOTE = {
+            text = L.NOTE_POPUP,
+            button1 = ACCEPT or "Accept",
+            button2 = CANCEL or "Cancel",
+            hasEditBox = 1,
+            hasWideEditBox = 1,
+            maxLetters = 120,
+            OnShow = function(self, data)
+                local n = RBP:PlayerNote(data)
+                self.wideEditBox:SetText(n and n.note or "")
+                self.wideEditBox:SetFocus()
+            end,
+            OnAccept = function(self) save(self) end,
+            OnHide = function(self)
+                if ChatEdit_FocusActiveWindow then ChatEdit_FocusActiveWindow() end
+                self.wideEditBox:SetText("")
+            end,
+            EditBoxOnEnterPressed = function(self)
+                local dialog = self:GetParent()
+                save(dialog)
+                dialog:Hide()
+            end,
+            EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+            timeout = 0,
+            exclusive = 1,
+            whileDead = 1,
+            hideOnEscape = 1,
+        }
+    end
+    StaticPopup_Show("RAIDBROWSERPLUS_NOTE", name, nil, name)
 end
 
 ---------------------------------------------------------------------------
@@ -1526,6 +1671,12 @@ function UI:DetailBlocks(e)
     end
     local function text(t) if not skip then B[#B + 1] = { kind = "text", text = t } end end
     local now = floor(GetTime())
+    local function noteRows(name, indent)
+        local n = RBP:PlayerNote(name)
+        if not n or skip then return end
+        if n.black then B[#B + 1] = { kind = "row", label = L.D_BLACKLIST, value = Col(C.bad, L.BLACKLISTED), indent = indent } end
+        if n.note then B[#B + 1] = { kind = "row", label = L.D_NOTE, value = n.note, indent = indent } end
+    end
 
     local contact = RBP:Contact(e.name)
     if e.isChat then
@@ -1540,6 +1691,7 @@ function UI:DetailBlocks(e)
         local notes = AdNotes(ad, e.isGroup)
         if #notes > 0 then row(L.D_NOTES, table.concat(notes, ", ")) end
         if contact then row(L.D_WHISPERS, ContactText(contact, AgoMinutes)) end
+        noteRows(e.name)
         row(L.D_SEEN, format(L.D_SEEN_IN, AgoMinutes(now - floor(e.seen)), e.area or L.CHAT_SOURCE))
         if e.posts > 1 then row(L.D_POSTED, format(RBP.Plural(e.posts, "D_POSTED_TIMES"), e.posts, AgoMinutes(now - floor(e.firstSeen)))) end
         header(L.D_AD, "comment")
@@ -1563,6 +1715,15 @@ function UI:DetailBlocks(e)
         if asks and not asks.anyRole then row(L.D_ASKS_FOR, AdRolesText(asks)) end
         if asks and asks.gs then row(L.D_GS_ASKED, GSText(asks.gs) .. "+") end
         if e.ilvl then row(L.D_AVG_ILVL, Col(RBP.ItemLevelColor(e.ilvl), FmtIlvl(e.ilvl))) end
+        local g = RBP:GroupGaps(e)
+        if g then
+            row(L.D_GAPS, GapRolesText(g))
+            if g.open > 0 then row(L.D_UTILITY, GapUtilityText(g)) end
+            local add = RBP:YouWouldAdd(e, g)
+            if add then row(L.D_YOU_ADD, Col(C.good, YouAddText(add))) end
+        end
+        local black = RBP:BlacklistedIn(e)
+        if #black > 0 then row(L.D_BLACKLIST, Col(C.bad, table.concat(black, ", "))) end
     else
         local roles = {}
         if e.isTank then roles[#roles + 1] = RBP.ROLE_ICON.TANK .. " " .. (TANK or "Tank") end
@@ -1573,6 +1734,7 @@ function UI:DetailBlocks(e)
     end
     if not e.isGroup and e.area and e.area ~= "" then row(ZONE or "Zone", e.area) end
     if contact then row(L.D_WHISPERS, ContactText(contact, AgoMinutes)) end
+    if not e.isGroup then noteRows(e.name) end -- a group's leader has them in the roster
     if e.initial then
         row(L.D_FIRST_SEEN, Col(C.dim, L.D_WHEN_STARTED))
     elseif e.firstSeen then
@@ -1657,6 +1819,9 @@ function UI:DetailBlocks(e)
             elseif rel == "guild" then tags[#tags + 1] = Col("40c8ff", L.TAG_GUILD)
             elseif rel == "ignored" then tags[#tags + 1] = Col(C.bad, L.TAG_IGNORED)
             elseif rel == "self" then tags[#tags + 1] = Col(C.dim, L.TAG_YOU) end
+            local mn = RBP:PlayerNote(m.name)
+            if mn and mn.black then tags[#tags + 1] = Col(C.bad, L.TAG_BLACKLISTED) end
+            if mn and mn.note then tags[#tags + 1] = RBP.NOTE_ICON_TEXT end
             local left = format("%s %s %s  %s", icon, RBP:ClassIcon(m.class, 12), Col(RBP:ClassColor(m.class), m.name),
                 Col(C.dim, SpecText(m)))
             if (m.level or 0) > 0 and m.level < (e.level or 80) then left = left .. Col(C.warn, format(L.LEVEL_SHORT, m.level)) end
@@ -1674,6 +1839,7 @@ function UI:DetailBlocks(e)
                 if m.area and m.area ~= "" and m.area ~= unknownZone then
                     B[#B + 1] = { kind = "row", label = ZONE or "Zone", value = m.area, indent = MEMBER_INDENT }
                 end
+                noteRows(m.name, MEMBER_INDENT)
                 local items = StatItems(m, showAll)
                 if items then
                     B[#B + 1] = { kind = "grid", items = items, indent = MEMBER_INDENT }

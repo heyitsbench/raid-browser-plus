@@ -16,7 +16,7 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 
   `/rbp scope all` includes old raids too.
 - **More columns.** Name, level, class with spec, listed roles, item level, bosses killed on the current lockout, raid, zone and comment. Click any header to sort, and click it again to reverse the order.
-- **Filters.** Players or groups, chat ads, role (tank/healer/damage: players who listed it, and groups that ask for it in their comment or chat ad; groups that don't say stay), minimum item level, "no kills" (fresh lockouts only), and a text search across names, class, spec, comment, zone and group members. Players on your ignore list are hidden; `/rbp ignored` shows them again.
+- **Filters.** Players or groups, chat ads, role (tank/healer/damage: players who listed it, and groups that ask for it in their comment or chat ad; groups that don't say stay), minimum item level, "no kills" (fresh lockouts only), and a text search across names, class, spec, comment, zone, group members and your notes on players. Players on your ignore list are hidden; `/rbp ignored` shows them again.
 - **Raid ads from chat.** Raid ads posted in public channels and yells are listed with the Raid Browser listings, with a speech-bubble icon where groups have the crown. Guild chat can be added with `/rbp chat guild`. Ads from groups recruiting (*LFM ICC 25 HC need 2 heals*) count as groups, and ads from players looking for a raid (*LF ICC 10 tank*) count as players, so the Players and Groups checkboxes apply to them too. The **Chat** checkbox hides them all.
   - Each ad shows the raids, sizes and difficulty it names, the roles it needs or offers (*any* when it names none), and its GearScore, which goes in the iLvl column (e.g. *5.8k*; chat ads sort below item levels, by GearScore). It also shows progress (*5/12*, *fresh*) and notes such as reserved items, achievement required, Discord and GDKP. Every raid the Raid Browser offers is recognized, by short name, full name or boss name.
   - An ad shows in the single-raid view of every raid it names, and in the all-raids view.
@@ -27,6 +27,7 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
   - Ads first posted while the window is open get the green new marker. With *Alert on new* on, a new ad that passes your filters also alerts, with the sound at most every 10 seconds. Reposts don't alert. Turn chat alerts off with `/rbp chat alert` or on the Chat ads options page.
 - **Details panel.** The full comment, boss-by-boss lockout, and combat stats in a two-column grid with gold labels and white values. Only the stats that matter for the class and spec are shown: physical (agility, attack power, expertise), spell (spell power, MP5), and defense (defense rating with a crit-immune check, dodge, parry, block). Relevant stats at 0 still show. The *show all* link on the Stats or Roster header (or `/rbp allstats`) lists every stat regardless of class and spec. Groups show everyone, leader included, in the roster with spec, item level, role and friend/guild tags. Click a name to expand that player's zone and stats, or use *expand all*. Each time you select a listing, a group opens with every roster row collapsed and a solo player opens with Stats expanded. Click any section header (Comment, Bosses, Stats, Roster) to collapse it. Folded Comment, Bosses, Roster and Listed for sections stay folded across listings; Stats resets per listing. Drag the divider between the list and the details to widen the pane (270 to 500 px, as far as the list's minimum width allows), or double-click it to reset; the width is saved with the window.
 - **Group composition.** Tank/healer/damage counts are inferred from each member's talent split. Defense and bear-form armor settle DK and druid tanks, and any warrior, paladin or DK with +100 defense counts as a tank. Groups also show size (e.g. 11/25) and average item level. A group's comment is read like a chat ad, so its details and tooltip show what it asks for (*need 2 heals, 5.8k+* gives *Asks for: 2 healers* and *GearScore asked: 5.8k+*).
+- **Group gaps.** A group's details and tooltip show what it lacks for its size, measured against a usual setup: two tanks (three in a 40-player raid), a healer for every five players, and damage for the rest, filled in that order as far as there are open spots. Members whose role can't be told are counted apart. Its details also show whether it has Heroism or Bloodlust (a shaman), a battle rez (a druid or death knight) and Replenishment (a Retribution paladin, Survival hunter, Shadow priest, Destruction warlock or Frost mage). A buff is marked with *?* when a member the client didn't return, or one without talents, might bring it. *You'd add* lists the role and buffs you would fill, which helps when pitching yourself.
 - **Who's new.** Listings that appear while you browse get a green marker. Turn on *Alert on new* to get a sound and a chat line when a listing that matches your filters shows up. While alerts are on, the addon keeps browsing in the background.
 - **Actions.** Whisper (or double-click a row), Invite, and a ready-to-edit *Ask to join* / *Recruit* whisper from a template (`/rbp template`). `{achi}` in a template links your best achievement for that raid. Right-click a row for a menu with Who and Add Friend.
 - **Hide entries.** Right-click a row and pick *Hide until relisted* for a Raid Browser listing, or *Hide until the ad changes* for a chat ad.
@@ -34,7 +35,13 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
   - A chat ad comes back when its text changes, or when it expires and is posted again. Reposting the same ad doesn't bring it back.
   - While anything is hidden, a button next to the search box shows how many. Click it to show them dimmed, where right-click → *Show again* brings one back for good. `/rbp hidden clear` brings them all back.
   - Hidden entries aren't saved between sessions.
+- **Notes and a blacklist.** Right-click a row to add a note on a player (*ninja looted*) or put them on your blacklist; for a group, that's its leader. Notes and the blacklist are saved for each realm, and `/rbp reset` keeps them.
+  - A note shows as a note icon after the name, and in the tooltip and details.
+  - Blacklisted players show in red with a skull, and are never alerted on or invited with *Invite replies*. A group with a blacklisted member gets the skull, and its tooltip and details name them.
+  - *Hide players on your blacklist* (main options page, or `/rbp blacklist hide`) hides them, their chat ads and the groups they lead. Groups they are only in stay, marked.
+  - `/rbp notes` lists everything, and `/rbp note` and `/rbp blacklist` change it by name.
 - **Who you've talked to.** Rows of people you've whispered with get a mark after the name, set by the latest whisper: a yellow ? after yours (waiting for a reply), a green check after theirs. The tooltip and details say when each was. A whisper stops counting after an hour, and the marks aren't saved.
+- **Invite everyone who replied.** While players in the list have the green check, an *Invite replies* button next to the search box shows how many; one click (or `/rbp invite`) invites them all. Players already in your group, invited since their last whisper (by any means, `/invite` included), or on your blacklist are left out, and a player counts again after a new whisper. Past four, the party becomes a raid first, the way the calendar's mass invite does it. If you're on your own, the first four are invited and the rest wait in line until someone joins and the group becomes a raid. An unanswered invite holds its spot for a minute, and a decline frees it for the next in line. Clicking again adds new replies to the end of the line. After 2 minutes without a raid, the line is dropped and those players are offered again.
 - **Your lockouts.** Raids you're saved to say *saved* in the raid menu. A listing for one of them shows *Your lockout* with the time until reset in its details.
 - **Your listing.** The footer shows whether you are listed and for which raids. From there you can change your comment, unlist, or open Blizzard's sign-up tab. `/rbp gs` also shows your GearScore and item level there.
 
@@ -49,6 +56,9 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 | `/rbp template [group\|player <text>]` | Show or set whisper templates. Tokens: `{name} {raid} {spec} {class} {ilvl} {gs} {role} {achi}` |
 | `/rbp scope level\|all` | Which raids the all-raids view covers |
 | `/rbp ignored` | Show or hide players on your ignore list |
+| `/rbp invite` | Invite everyone in the list who replied to your whisper (the green check) |
+| `/rbp note <name> [<text>]`, `/rbp notes` | Set or (without text) clear your note on a player; list your notes and blacklist |
+| `/rbp blacklist [<name>\|hide]` | Put a player on your blacklist or take them off, list it, or toggle hiding blacklisted players |
 | `/rbp hidden [clear]` | Show or hide the entries you hid, or bring them all back |
 | `/rbp gs` | Show or hide your GearScore and item level in the footer |
 | `/rbp chat [on\|off]` | Show the chat-ad settings, or turn chat ads on or off |
@@ -60,7 +70,7 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 | `/rbp chat test <message>` | Show how a message would be read, and list it as your own ad |
 | `/rbp allstats` | Toggle between every stat and only the stats relevant to class and spec |
 | `/rbp dump [n]` | Print the raw API returns for the first *n* results and save them to SavedVariables |
-| `/rbp reset` | Reset settings and window position |
+| `/rbp reset` | Reset settings and window position (your notes and blacklist stay) |
 
 ## What the client returns
 

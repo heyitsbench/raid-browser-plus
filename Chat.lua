@@ -633,7 +633,7 @@ end
 function RBP:AlertChatAd(rec)
     if not (self.db.alert and self.db.chat.alert) then return end
     local e = self:ChatEntry(rec)
-    if e.isSelf or not self:ChatAdShown(e) then return end
+    if e.isSelf or self:IsBlacklisted(e.name) or not self:ChatAdShown(e) then return end
     local now = GetTime()
     if self.db.alertSound and now - (self.chatAlertSound or -100) >= 10 then
         self.chatAlertSound = now

@@ -50,6 +50,7 @@ local DEFAULTS = {
         tank = false, healer = false, dps = false,
         minIlvl = 0, freshOnly = false, hideIgnored = true, search = "",
         chat = true,       -- show raid ads read from chat
+        hideBlacklisted = false, -- hide players on your blacklist, and groups they lead
     },
     chat = {               -- reading raid ads from chat (Chat.lua, /rbp chat)
         enabled = true,
@@ -75,6 +76,7 @@ local DEFAULTS = {
         player = L.TEMPLATE_PLAYER,
     },
     window = { width = 1040, height = 500, detailWidth = 270 },
+    notes = {},            -- realm -> lower-case name -> { name, note, black, time }; kept by /rbp reset
 }
 RBP.DEFAULTS = DEFAULTS -- for the options panels (Options.lua)
 
@@ -651,7 +653,12 @@ function RBP:PassesFilters(e)
         if not fresh then return false end
     end
     if f.hideIgnored and e.relation == "ignored" then return false end
-    if f.search and f.search ~= "" and not e.searchText:find(f.search, 1, true) then return false end
+    if f.hideBlacklisted and self:IsBlacklisted(e.name) then return false end
+    if f.search and f.search ~= "" and not e.searchText:find(f.search, 1, true) then
+        -- your note on them counts too
+        local n = self:PlayerNote(e.name)
+        if not (n and n.note and RBP.Lower(n.note):find(f.search, 1, true)) then return false end
+    end
     if not self.showHidden and self:IsHidden(e) then return false end
     return true
 end
@@ -1174,7 +1181,7 @@ function RBP:AlertNew(list)
     local hits = {}
     for _, e in ipairs(list) do
         e.relation = self:Relation(e.name)
-        if not e.isSelf and self:PassesFilters(e) then hits[#hits + 1] = e end
+        if not e.isSelf and not self:IsBlacklisted(e.name) and self:PassesFilters(e) then hits[#hits + 1] = e end
     end
     if #hits == 0 then return end
     if self.db.alertSound then PlaySound("ReadyCheck") end
@@ -1415,6 +1422,321 @@ function RBP:Contact(name)
     return { sent = sent, received = received }
 end
 
+-- The latest whisper is theirs: a reply to yours, or they wrote first
+function RBP:HasReplied(name)
+    local c = self:Contact(name)
+    return c and c.received and c.received >= (c.sent or 0) and true or false
+end
+
+---------------------------------------------------------------------------
+-- Invite everyone who replied: the players in the list with the green check,
+-- unless they are in your group, were invited since their last whisper, or
+-- are on your blacklist. A party holds 5, so past that the party becomes a
+-- raid first, as the calendar's mass invite does: once one player has joined
+-- if you are on your own. Invites not answered yet hold their spot.
+---------------------------------------------------------------------------
+local INVITE_WAIT = 120   -- how long the rest wait for the raid to form
+local INVITE_ANSWER = 60  -- an unanswered invite holds a spot this long
+
+RBP.invitesOut = {} -- lower-case name -> { name, time }: invites not answered yet
+
+local function InGroup(name)
+    return (UnitInRaid and UnitInRaid(name)) or (UnitInParty and UnitInParty(name)) or false
+end
+
+local function RealRaid() return (GetRealNumRaidMembers or GetNumRaidMembers)() end
+local function RealParty() return (GetRealNumPartyMembers or GetNumPartyMembers)() end
+
+function RBP:CanInviteNow()
+    return not CanGroupInvite or CanGroupInvite()
+end
+
+-- Every invite, the addon's or yours (/invite, the unit menu, the Invite
+-- buttons): the player counts as invited until they whisper again, and holds
+-- a spot until they answer.
+function RBP:OnInviteSent(unit)
+    if type(unit) ~= "string" or unit == "" then return end
+    local name = (UnitExists and UnitExists(unit) and UnitName(unit)) or unit
+    local key, now = RBP.Lower(name), GetTime()
+    self.invitesOut[key] = { name = name, time = now }
+    local c = self.contacts[key]
+    if c then c.invited = now end
+    self:RequestRefresh()
+end
+
+-- Invites still out: sent in the last minute to someone not in your group yet
+function RBP:InvitesOut()
+    local n, now = 0, GetTime()
+    for key, rec in pairs(self.invitesOut) do
+        if now - rec.time > INVITE_ANSWER or InGroup(rec.name) then
+            self.invitesOut[key] = nil
+        else
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- "Bob declines your group invitation." and the like free Bob's spot
+local INVITE_ANSWERS
+function RBP:OnSystemMessage(msg)
+    if not next(self.invitesOut) or type(msg) ~= "string" then return end
+    if not INVITE_ANSWERS then
+        INVITE_ANSWERS = {}
+        for _, g in ipairs({ ERR_DECLINE_GROUP_S, ERR_ALREADY_IN_GROUP_S, ERR_BAD_PLAYER_NAME_S }) do
+            if type(g) == "string" then
+                local pat = g:gsub("([%^%$%(%)%.%[%]%*%+%-%?])", "%%%1"):gsub("%%s", "(.+)")
+                INVITE_ANSWERS[#INVITE_ANSWERS + 1] = "^" .. pat .. "$"
+            end
+        end
+    end
+    for _, pat in ipairs(INVITE_ANSWERS) do
+        local name = msg:match(pat)
+        if name and self.invitesOut[RBP.Lower(name)] then
+            self.invitesOut[RBP.Lower(name)] = nil
+            if self.inviteQueue then self:SendQueuedInvites() end -- a spot opened
+            return
+        end
+    end
+end
+
+-- Players to invite, in list order, from the entries shown
+function RBP:RepliedPlayers(list)
+    local out, seen = {}, {}
+    local queued = self.inviteQueue and self.inviteQueue.set or {}
+    for _, e in ipairs(list or self.view or {}) do
+        local key = RBP.Lower(e.name or "")
+        if not e.isGroup and not e.isSelf and not seen[key] and not queued[key] and self:HasReplied(e.name)
+            and not InGroup(e.name) and not self:IsBlacklisted(e.name) then
+            local c = self.contacts[key]
+            if not (c.invited and c.invited >= c.received) then
+                seen[key] = true
+                out[#out + 1] = e.name
+            end
+        end
+    end
+    return out
+end
+
+-- Spots the queue needs beyond a party's
+local function NeedsRaid(self, q)
+    return RealRaid() == 0 and RealParty() + self:InvitesOut() + #q.names > (MAX_PARTY_MEMBERS or 4)
+end
+
+local function ConvertOnce(self, q)
+    if q.converting and GetTime() - q.converting < 5 then return end
+    q.converting = GetTime()
+    ConvertToRaid() -- the invites follow PARTY_CONVERTED_TO_RAID
+end
+
+function RBP:InviteReplies(list)
+    if not self:CanInviteNow() then self:Print(L.INVITE_NOT_LEADER); return end
+    local names = self:RepliedPlayers(list)
+    if #names == 0 then self:Print(L.INVITE_NONE); return end
+    -- players still waiting from an earlier click stay in line, first
+    local q = self.inviteQueue or { names = {}, set = {} }
+    for _, n in ipairs(names) do
+        q.names[#q.names + 1] = n
+        q.set[RBP.Lower(n)] = true
+    end
+    q.time = GetTime()
+    self.inviteQueue = q
+    self:After(INVITE_WAIT, function()
+        if self.inviteQueue == q and GetTime() - q.time >= INVITE_WAIT - 1 then self:DropInviteQueue() end
+    end)
+    if NeedsRaid(self, q) and RealParty() > 0 then
+        ConvertOnce(self, q)
+        self:Print(L.INVITE_CONVERTING)
+        return
+    end
+    self:SendQueuedInvites(true)
+end
+
+-- No raid formed in time: the ones still waiting are offered again
+function RBP:DropInviteQueue()
+    self.inviteQueue = nil
+    self:RequestRefresh()
+end
+
+-- Invite as many as there is room for; the rest wait for a raid
+function RBP:SendQueuedInvites(clicked)
+    local q = self.inviteQueue
+    if not q then return end
+    local room
+    if RealRaid() > 0 then
+        room = (MAX_RAID_MEMBERS or 40) - RealRaid() - self:InvitesOut()
+    else
+        room = (MAX_PARTY_MEMBERS or 4) - RealParty() - self:InvitesOut()
+    end
+    local sent, left = {}, {}
+    for _, n in ipairs(q.names) do
+        if not InGroup(n) then
+            if #sent < room then sent[#sent + 1] = n else left[#left + 1] = n end
+        end
+    end
+    q.names, q.set = left, {}
+    for _, n in ipairs(left) do q.set[RBP.Lower(n)] = true end
+    for _, n in ipairs(sent) do InviteUnit(n) end -- marked as invited by the hook (OnInviteSent)
+    if #sent > 0 then self:Print(L.INVITED, #sent, table.concat(sent, ", ")) end
+    if #left == 0 then
+        self.inviteQueue = nil
+    elseif RealRaid() == 0 then
+        if #sent > 0 or clicked then self:Print(RBP.Plural(#left, "INVITE_WAITING"), #left) end
+    else
+        self.inviteQueue = nil -- not offered again until a spot opens
+        self:Print(L.INVITE_RAID_FULL, table.concat(left, ", "))
+    end
+    self:RequestRefresh()
+end
+
+function RBP:OnGroupChanged(event)
+    local q = self.inviteQueue
+    if not q then return end
+    if RealRaid() > 0 then
+        if event == "PARTY_CONVERTED_TO_RAID" or event == "RAID_ROSTER_UPDATE" then self:SendQueuedInvites() end
+    elseif RealParty() > 0 and IsPartyLeader and IsPartyLeader() then
+        -- someone joined: now the party can become a raid, if it needs to
+        if NeedsRaid(self, q) then ConvertOnce(self, q) else self:SendQueuedInvites() end
+    end
+end
+
+---------------------------------------------------------------------------
+-- Your notes on players, and your blacklist, saved per realm
+---------------------------------------------------------------------------
+function RBP:NotesTable()
+    local realm = GetRealmName and GetRealmName() or "?"
+    local all = self.db.notes
+    all[realm] = all[realm] or {}
+    return all[realm]
+end
+
+-- { name, note, black, time } or nil
+function RBP:PlayerNote(name)
+    if not (name and self.db) then return nil end
+    return self:NotesTable()[RBP.Lower(name)]
+end
+
+function RBP:IsBlacklisted(name)
+    local n = self:PlayerNote(name)
+    return n and n.black and true or false
+end
+
+local function NoteRecord(self, name, create)
+    local t, key = self:NotesTable(), RBP.Lower(name)
+    if not t[key] and create then t[key] = { name = name } end
+    return t, key, t[key]
+end
+
+local function DropIfEmpty(t, key)
+    local n = t[key]
+    if n and not n.black and not (n.note and n.note ~= "") then t[key] = nil end
+end
+
+function RBP:SetPlayerNote(name, text)
+    if not name or name == "" then return end
+    text = strtrim(text or "")
+    local t, key, n = NoteRecord(self, name, text ~= "")
+    if n then
+        n.name, n.note, n.time = name, text ~= "" and text or nil, time and time() or 0
+        DropIfEmpty(t, key)
+    end
+    self:RequestRefresh()
+end
+
+function RBP:SetBlacklisted(name, on)
+    if not name or name == "" then return end
+    local t, key, n = NoteRecord(self, name, on)
+    if n then
+        n.name, n.black, n.time = name, on and true or nil, time and time() or 0
+        DropIfEmpty(t, key)
+    end
+    self:RequestRefresh()
+end
+
+-- Blacklisted members of a group, leader included
+function RBP:BlacklistedIn(e)
+    local out = {}
+    for _, m in ipairs(e.roster or { e }) do
+        if self:IsBlacklisted(m.name) then out[#out + 1] = m.name end
+    end
+    return out
+end
+
+---------------------------------------------------------------------------
+-- What a listed group lacks for its size: roles below a usual setup (two
+-- tanks, three in a 40; a healer for every five players), and Heroism or
+-- Bloodlust, a battle rez (druids, death knights) and Replenishment (from
+-- these specs). Members the client didn't return, or that sent no talents,
+-- could be anything, so a buff they might bring is "maybe" rather than "no".
+---------------------------------------------------------------------------
+RBP.REPLENISH_SPEC = { PALADIN = "Retribution", HUNTER = "Survival", PRIEST = "Shadow", WARLOCK = "Destruction", MAGE = "Frost" }
+local LUST_CLASS = { SHAMAN = true }
+local BREZ_CLASS = { DRUID = true, DEATHKNIGHT = true }
+
+function RBP:GroupGaps(e)
+    if not (e.isGroup and e.roster and e.comp and (e.maxPlayers or 0) >= 10) then return nil end
+    local max, comp = e.maxPlayers, e.comp
+    local size = math.max(e.size or #e.roster, #e.roster)
+    local want = { TANK = max >= 40 and 3 or 2, HEALER = floor(max / 5) }
+    want.DAMAGER = max - want.TANK - want.HEALER
+    local notReturned = math.max(0, size - #e.roster)
+    local g = { open = math.max(0, max - size), unknown = (comp.UNKNOWN or 0) + notReturned, roles = {} }
+    -- what to recruit next: tanks first, then healers, as far as there is room
+    local room = g.open
+    for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+        local n = math.min(room, math.max(0, want[role] - (comp[role] or 0)))
+        g.roles[role] = n
+        room = room - n
+    end
+    local lust, brez, repl, specUnknown = false, false, false, 0
+    for _, m in ipairs(e.roster) do
+        if LUST_CLASS[m.class or ""] then lust = true end
+        if BREZ_CLASS[m.class or ""] then brez = true end
+        local spec = RBP.REPLENISH_SPEC[m.class or ""]
+        if spec then
+            if m.specName == spec then repl = true
+            elseif not m.specName or m.specName == "Hybrid" then specUnknown = specUnknown + 1 end
+        end
+    end
+    local function state(has, unknown) return has and "yes" or (unknown > 0 and "maybe" or "no") end
+    g.lust = state(lust, notReturned)
+    g.brez = state(brez, notReturned)
+    g.repl = state(repl, notReturned + specUnknown)
+    return g
+end
+
+-- Your class, talent tree (English) and role
+function RBP:PlayerTalents()
+    local _, classToken = UnitClass("player")
+    local pts = {}
+    for tab = 1, 3 do
+        local _, _, spent = GetTalentTabInfo(tab)
+        pts[tab] = tonumber(spent) or 0
+    end
+    local specName, role = self:InferSpec(classToken, { talent1 = pts[1], talent2 = pts[2], talent3 = pts[3] })
+    return classToken, specName, role
+end
+
+-- What you would fill of a group's gaps: { role = "HEALER"?, lust, brez, repl }
+function RBP:YouWouldAdd(e, g)
+    if not g or e.isSelf or g.open == 0 then return nil end
+    for _, m in ipairs(e.roster or {}) do
+        if m.name == self.playerName then return nil end
+    end
+    local class, spec, role = self:PlayerTalents()
+    if (role == nil or role == "HYBRID") and GetLFGRoles then
+        local _, tank, healer, dps = GetLFGRoles() -- as for {role} in whispers
+        role = tank and "TANK" or (dps and "DAMAGER" or (healer and "HEALER" or nil))
+    end
+    local add = {}
+    if role and (g.roles[role] or 0) > 0 then add.role = role end
+    if g.lust ~= "yes" and LUST_CLASS[class or ""] then add.lust = true end
+    if g.brez ~= "yes" and BREZ_CLASS[class or ""] then add.brez = true end
+    if g.repl ~= "yes" and spec and RBP.REPLENISH_SPEC[class or ""] == spec then add.repl = true end
+    if not (add.role or add.lust or add.brez or add.repl) then return nil end
+    return add
+end
+
 ---------------------------------------------------------------------------
 -- Your raid lockouts, keyed by raid code and size ("ICC:25"); heroic Trial of
 -- the Crusader is saved separately, as "ToGC:25".
@@ -1503,6 +1825,26 @@ end
 ---------------------------------------------------------------------------
 local function OnOff(v) return v and ("|cff40ff40" .. L.ON .. "|r") or ("|cffff4040" .. L.OFF .. "|r") end
 
+-- "bob" -> "Bob", the way the game writes names
+local function NameCase(name)
+    if (name:byte(1) or 0) >= 128 then return name end -- leave non-Latin names as typed
+    return name:sub(1, 1):upper() .. RBP.Lower(name:sub(2))
+end
+
+function RBP:PrintNotes()
+    local list = {}
+    for _, n in pairs(self:NotesTable()) do list[#list + 1] = n end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    if #list == 0 then self:Print(L.NOTES_NONE); return end
+    self:Print(L.NOTES_HEADER)
+    for _, n in ipairs(list) do
+        local parts = {}
+        if n.black then parts[#parts + 1] = "|cffff4040" .. L.BLACKLISTED .. "|r" end
+        if n.note then parts[#parts + 1] = n.note end
+        DEFAULT_CHAT_FRAME:AddMessage("  " .. n.name .. ": " .. table.concat(parts, " - "))
+    end
+end
+
 function RBP:Slash(msg)
     msg = strtrim(msg or "")
     local cmd, rest = msg:match("^(%S*)%s*(.-)$")
@@ -1528,6 +1870,34 @@ function RBP:Slash(msg)
             self.showHidden = not self.showHidden or nil
             self:RequestRefresh()
             self:Print(self.showHidden and L.HIDDEN_SHOWN or L.HIDDEN_HIDDEN)
+        end
+    elseif cmd == "invite" then
+        self:InviteReplies(self:BuildView())
+    elseif cmd == "note" or cmd == "notes" then
+        local name, text = rest:match("^(%S+)%s*(.-)$")
+        if cmd == "note" and name then
+            name = NameCase(name)
+            self:SetPlayerNote(name, text)
+            self:Print(text ~= "" and L.NOTE_SET or L.NOTE_CLEARED, name)
+        else
+            self:PrintNotes()
+        end
+    elseif cmd == "blacklist" then
+        if rest:lower() == "hide" then
+            self.db.filters.hideBlacklisted = not self.db.filters.hideBlacklisted
+            self:RequestRefresh()
+            self:Print(L.HIDE_BLACKLISTED_IS, OnOff(self.db.filters.hideBlacklisted))
+        elseif rest ~= "" then
+            local name = NameCase(rest:match("^(%S+)"))
+            local on = not self:IsBlacklisted(name)
+            self:SetBlacklisted(name, on)
+            self:Print(on and L.BLACKLIST_ADDED or L.BLACKLIST_REMOVED, name)
+        else
+            local names = {}
+            for _, n in pairs(self:NotesTable()) do if n.black then names[#names + 1] = n.name end end
+            table.sort(names)
+            self:Print(#names > 0 and L.BLACKLIST_IS or L.BLACKLIST_EMPTY, table.concat(names, ", "))
+            self:Print(L.HIDE_BLACKLISTED_IS, OnOff(self.db.filters.hideBlacklisted))
         end
     elseif cmd == "options" or cmd == "config" then
         if self.Options then
@@ -1580,8 +1950,10 @@ function RBP:Slash(msg)
             self:Print(L.TEMPLATES_HOW)
         end
     elseif cmd == "reset" then
+        local notes = self.db.notes -- your notes on players aren't settings
         wipe(self.db)
         merge(self.db, DEFAULTS)
+        self.db.notes = notes
         if self.UI then
             self.UI:ResetPosition()
             if self.UI.search then self.UI.search:SetText("") end
@@ -1592,7 +1964,7 @@ function RBP:Slash(msg)
         self:Print(L.SETTINGS_RESET)
     else
         self:Print(L.HELP_HEADER)
-        for i = 1, 8 do DEFAULT_CHAT_FRAME:AddMessage(L["HELP_" .. i]) end
+        for i = 1, 10 do DEFAULT_CHAT_FRAME:AddMessage(L["HELP_" .. i]) end
     end
 end
 
@@ -1629,6 +2001,8 @@ events:RegisterEvent("UPDATE_LFG_LIST")
 events:RegisterEvent("LFG_UPDATE")
 events:RegisterEvent("PARTY_MEMBERS_CHANGED")
 events:RegisterEvent("RAID_ROSTER_UPDATE")
+events:RegisterEvent("PARTY_CONVERTED_TO_RAID")
+events:RegisterEvent("CHAT_MSG_SYSTEM")
 events:RegisterEvent("FRIENDLIST_UPDATE")
 events:RegisterEvent("GUILD_ROSTER_UPDATE")
 events:RegisterEvent("IGNORELIST_UPDATE")
@@ -1661,6 +2035,9 @@ function RBP:OnEvent(event, arg1, arg2)
         if hooksecurefunc and JoinLFG then
             hooksecurefunc("JoinLFG", function() RBP:OnJoinLFGCalled() end)
         end
+        if hooksecurefunc and InviteUnit then
+            hooksecurefunc("InviteUnit", function(unit) RBP:OnInviteSent(unit) end)
+        end
         if ShowFriends then ShowFriends() end
         if IsInGuild and IsInGuild() and GuildRoster then GuildRoster() end
         self:RebuildRelations()
@@ -1675,7 +2052,8 @@ function RBP:OnEvent(event, arg1, arg2)
         if self.joinWatch then self.joinWatchResponse = true end
         if GetLFGMode and GetLFGMode() == "listed" then self.staleListing = nil end
         self:RequestRefresh()
-    elseif event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" then
+    elseif event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" or event == "PARTY_CONVERTED_TO_RAID" then
+        self:OnGroupChanged(event)
         self:RequestRefresh()
     elseif event == "FRIENDLIST_UPDATE" or event == "GUILD_ROSTER_UPDATE" or event == "IGNORELIST_UPDATE" then
         self:RebuildRelations()
@@ -1685,6 +2063,8 @@ function RBP:OnEvent(event, arg1, arg2)
         self:OnWhisper(event, arg2)
     elseif event == "UPDATE_INSTANCE_INFO" then
         self:UpdateLockouts()
+    elseif event == "CHAT_MSG_SYSTEM" then
+        self:OnSystemMessage(arg1)
     end
 end
 

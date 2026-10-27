@@ -230,6 +230,7 @@ end
 local function BuildMain()
     local p = NewPanel(MAIN_NAME, nil, {
         "alert", "alertSound", "scanScope", "showAllStats", "showGearScore", { "filters", "hideIgnored" },
+        { "filters", "hideBlacklisted" },
     }, function()
         RBP:SetAlert(RBP.db.alert)
         RBP:SetShowAllStats(RBP.db.showAllStats)
@@ -261,9 +262,12 @@ local function BuildMain()
     local ignored = Check(p, L.OPT_IGNORED, "/rbp ignored",
         function() return db().filters.hideIgnored end, function(v) db().filters.hideIgnored = v; Changed() end)
     ignored:SetPoint("TOPLEFT", scope, "BOTTOMLEFT", 0, 0)
+    local black = Check(p, L.OPT_BLACKLISTED, L.OPT_BLACKLISTED_TIP .. "\n\n/rbp blacklist hide",
+        function() return db().filters.hideBlacklisted end, function(v) db().filters.hideBlacklisted = v; Changed() end)
+    black:SetPoint("TOPLEFT", ignored, "BOTTOMLEFT", 0, 0)
     local allstats = Check(p, L.OPT_ALLSTATS, L.OPT_ALLSTATS_TIP .. "\n\n/rbp allstats",
         function() return db().showAllStats end, function(v) RBP:SetShowAllStats(v) end)
-    allstats:SetPoint("TOPLEFT", ignored, "BOTTOMLEFT", 0, 0)
+    allstats:SetPoint("TOPLEFT", black, "BOTTOMLEFT", 0, 0)
     local gs = Check(p, L.OPT_GS, "/rbp gs",
         function() return db().showGearScore end, function(v) db().showGearScore = v; Changed() end)
     gs:SetPoint("TOPLEFT", allstats, "BOTTOMLEFT", 0, 0)
