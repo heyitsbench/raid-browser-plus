@@ -21,7 +21,7 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 - **Group composition.** Tank/healer/damage counts are inferred from each member's talent split. Defense and bear-form armor settle DK and druid tanks, and any warrior, paladin or DK with +100 defense counts as a tank. Groups also show size (e.g. 11/25) and average item level.
 - **Who's new.** Listings that appear while you browse get a green marker. Turn on *Alert on new* to get a sound and a chat line when a listing that matches your filters shows up. While alerts are on, the addon keeps browsing in the background.
 - **Actions.** Whisper (or double-click a row), Invite, and a ready-to-edit *Ask to join* / *Recruit* whisper from a template (`/rbp template`). Right-click a row for a menu with Who and Add Friend.
-- **Your listing.** The footer shows whether you are listed and for which raids. From there you can change your comment, unlist, or open Blizzard's sign-up tab.
+- **Your listing.** The footer shows whether you are listed and for which raids. From there you can change your comment, unlist, or open Blizzard's sign-up tab. `/rbp gs` also shows your GearScore and item level there.
 
 ## Commands
 
@@ -30,9 +30,10 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 | `/rbp` | Toggle the window |
 | `/rbp scan` | Switch to all raids, or load the next raid if already there |
 | `/rbp alert`, `/rbp sound` | Toggle new-listing alerts and their sound |
-| `/rbp template [group\|player <text>]` | Show or set whisper templates. Tokens: `{name} {raid} {spec} {class} {ilvl} {role}` |
+| `/rbp template [group\|player <text>]` | Show or set whisper templates. Tokens: `{name} {raid} {spec} {class} {ilvl} {gs} {role}` |
 | `/rbp scope level\|all` | Which raids the all-raids view covers |
 | `/rbp ignored` | Show or hide players on your ignore list |
+| `/rbp gs` | Show or hide your GearScore and item level in the footer |
 | `/rbp allstats` | Toggle between every stat and only the stats relevant to class and spec |
 | `/rbp dump [n]` | Print the raw API returns for the first *n* results and save them to SavedVariables |
 | `/rbp reset` | Reset settings and window position |
@@ -72,6 +73,7 @@ The addon only trusts the stat block when the talent and item-level returns hold
 
 - Spec names are English and use the 3.3.5 talent tab order. Composition counts are inferences. Warlocks, mages, hunters and rogues always count as damage. Hybrid classes with no talents spent show as "?", and so do Blood/Frost DKs and Feral druids unless defense or armor settles it. Members without stats (offline since the group was listed) can only be judged by class.
 - `{ilvl}` in whisper templates is your item level counted the way the list counts it, so it matches what others see next to your name. It averages 15 slots (shirt, tabard, off-hand and ranged excluded; empty slots count as 0). Epic and better count as is, rare items 13 levels lower, uncommon and below 26 lower, and heirlooms as 2.33 × your level. Decimals are dropped. A character in mostly blues therefore shows about 10 to 13 below the plain average of their item levels.
+- Your GearScore (footer and `{gs}`) comes from the GearScore or GearScoreLite addon when one is installed, so it matches what that addon shows. Without one, the addon works it out with the same formula, including the lower score for enchantable items without an enchant. The server doesn't send other players' gear, so GearScore is only available for you.
 - Defense rating is converted to defense points with the 3.x rating formula (4.92 rating per point at 80). A non-druid with +140 defense (689 rating at 80) is marked crit-immune, which assumes their base defense skill is maxed.
 - The client keeps only one raid's list, the one it last asked for. That's why all-raids mode merges lists loaded one at a time, and why only the last raid loaded gets live updates. Groups are keyed by leader name.
 - Alerts keep watching the raid you last loaded while the window is closed. After a relog, open the window once to start watching again, since that request needs a click or key press.

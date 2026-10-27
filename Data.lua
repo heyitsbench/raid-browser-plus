@@ -193,3 +193,70 @@ function RBP.ItemLevelColor(ilvl)
     if ilvl >= 200 then return "1eff00" end
     return "ffffff"
 end
+
+---------------------------------------------------------------------------
+-- GearScore, with the GearScore / GearScoreLite addon's formula. Used for
+-- your own score when neither addon is installed (Core.lua asks the addon
+-- first). Scores are per item, rounded down, then summed.
+---------------------------------------------------------------------------
+-- equip location -> { slot weight, enchant slot number, can be enchanted }
+-- An enchantable item without an enchant loses 2% per enchant slot number.
+RBP.GS_SLOTS = {
+    INVTYPE_HEAD           = { 1.0000, 1, true },
+    INVTYPE_NECK           = { 0.5625, 2, false },
+    INVTYPE_SHOULDER       = { 0.7500, 3, true },
+    INVTYPE_CHEST          = { 1.0000, 5, true },
+    INVTYPE_ROBE           = { 1.0000, 5, true },
+    INVTYPE_WAIST          = { 0.7500, 6, false },
+    INVTYPE_LEGS           = { 1.0000, 7, true },
+    INVTYPE_FEET           = { 0.7500, 8, true },
+    INVTYPE_WRIST          = { 0.5625, 9, true },
+    INVTYPE_HAND           = { 0.7500, 10, true },
+    INVTYPE_FINGER         = { 0.5625, 31, false },
+    INVTYPE_TRINKET        = { 0.5625, 33, false },
+    INVTYPE_CLOAK          = { 0.5625, 15, true },
+    INVTYPE_2HWEAPON       = { 2.0000, 16, true },
+    INVTYPE_WEAPONMAINHAND = { 1.0000, 16, true },
+    INVTYPE_WEAPON         = { 1.0000, 36, true },
+    INVTYPE_WEAPONOFFHAND  = { 1.0000, 17, true },
+    INVTYPE_SHIELD         = { 1.0000, 17, true },
+    INVTYPE_HOLDABLE       = { 1.0000, 17, false },
+    INVTYPE_RANGED         = { 0.3164, 18, true },
+    INVTYPE_RANGEDRIGHT    = { 0.3164, 18, false },
+    INVTYPE_THROWN         = { 0.3164, 18, false },
+    INVTYPE_RELIC          = { 0.3164, 18, false },
+}
+-- quality -> { offset, divisor }, for item level above 120 and up to 120
+local GS_CURVE_HIGH = { [4] = { 91.45, 0.65 }, [3] = { 81.375, 0.8125 }, [2] = { 73.0, 1.0 } }
+local GS_CURVE_LOW = { [4] = { 26.0, 1.2 }, [3] = { 0.75, 1.8 }, [2] = { 8.0, 2.0 }, [1] = { 0.0, 2.25 } }
+local GS_SCALE = 1.8618
+
+function RBP.GearScoreItem(quality, ilvl, equipLoc, enchanted)
+    local slot = RBP.GS_SLOTS[equipLoc or ""]
+    if not slot or not quality or not ilvl then return 0 end
+    local qualityScale = 1
+    if quality == 5 then
+        quality, qualityScale = 4, 1.3          -- legendary
+    elseif quality <= 1 then
+        quality, qualityScale = 2, 0.005        -- poor, common
+    elseif quality == 7 then
+        quality, ilvl = 3, 187.05               -- heirloom
+    end
+    local curve = (ilvl > 120 and GS_CURVE_HIGH or GS_CURVE_LOW)[quality]
+    if not curve then return 0 end
+    local score = math.floor((ilvl - curve[1]) / curve[2] * slot[1] * GS_SCALE * qualityScale)
+    if score < 0 then return 0 end
+    if slot[3] and not enchanted then score = math.floor(score * (1 + (-2 * slot[2]) / 100)) end
+    return score
+end
+
+-- Colour bands in the GearScore addon's style (it blends within each band).
+function RBP.GearScoreColor(gs)
+    if not gs or gs <= 0 then return RBP.COLORS.dim end
+    if gs >= 5000 then return "f07800" end
+    if gs >= 4000 then return "b047f7" end
+    if gs >= 3000 then return "0080ff" end
+    if gs >= 2000 then return "1fff00" end
+    if gs >= 1000 then return "ffffff" end
+    return "8c8c8c"
+end

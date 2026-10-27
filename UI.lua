@@ -795,10 +795,36 @@ function UI:CreateFooter()
     foot.commentLabel:SetPoint("RIGHT", foot.comment, "LEFT", -8, 0)
     foot.commentLabel:SetText("Comment:")
 
+    -- your GearScore and item level (/rbp gs); a button so it can have a tooltip
+    foot.gear = CreateFrame("Button", nil, foot)
+    foot.gear:SetHeight(FOOTER_H)
+    foot.gear:SetPoint("LEFT", 2, 0)
+    foot.gear.text = Text(foot.gear, "GameFontHighlightSmall")
+    foot.gear.text:SetPoint("LEFT", 0, 0)
+    SetTip(foot.gear, "Your gear", function()
+        local _, source = RBP:PlayerGearScore()
+        local where = source == "addon" and "GearScore from your GearScore addon."
+            or "GearScore worked out with the GearScore addon's formula. With GearScore or GearScoreLite installed, its own number is used."
+        if source == "partial" then where = where .. " Some items aren't loaded yet, so it may be low for a moment." end
+        return where .. "\n\nItem level is counted the way the Raid Browser list counts it, so it matches what others see next to your name."
+            .. "\n\n|cffb0b0b0Hide with /rbp gs.|r"
+    end)
+    foot.gear:Hide()
+
     foot.state = Text(foot, "GameFontHighlightSmall")
-    foot.state:SetPoint("LEFT", 2, 0)
-    foot.state:SetPoint("RIGHT", foot.commentLabel, "LEFT", -10, 0)
     foot.state:SetHeight(FOOTER_H)
+    self:AnchorFooterState(false)
+end
+
+function UI:AnchorFooterState(afterGear)
+    local foot = self.footer
+    foot.state:ClearAllPoints()
+    if afterGear then
+        foot.state:SetPoint("LEFT", foot.gear, "RIGHT", 14, 0)
+    else
+        foot.state:SetPoint("LEFT", 2, 0)
+    end
+    foot.state:SetPoint("RIGHT", foot.commentLabel, "LEFT", -10, 0)
 end
 
 ---------------------------------------------------------------------------
@@ -1749,6 +1775,17 @@ end
 
 function UI:UpdateFooter()
     local foot = self.footer
+    local showGear = RBP.db.showGearScore
+    if showGear then
+        local gs = RBP:PlayerGearScore()
+        foot.gear.text:SetText(format("%s %s   %s %s", Col(C.dim, "GS"), Col(RBP.GearScoreColor(gs), Num(gs)),
+            Col(C.dim, "iLvl"), format("%d", floor(RBP:PlayerItemLevel()))))
+        foot.gear:SetWidth(floor((foot.gear.text:GetStringWidth() or 80) + 2))
+    end
+    if showGear ~= (foot.gear:IsShown() and true or false) then -- IsShown gives 1/nil
+        if showGear then foot.gear:Show() else foot.gear:Hide() end
+        self:AnchorFooterState(showGear)
+    end
     local listed, raids, comment, empowered = RBP:GetListingState()
     local inGroup = (GetNumPartyMembers() > 0) or (GetNumRaidMembers() > 0)
     if listed then

@@ -38,6 +38,7 @@ local DEFAULTS = {
     alertSound = true,
     scanScope = "level",   -- "level" | "all"
     showAllStats = false,  -- list every stat, not just the ones relevant to class/spec
+    showGearScore = false, -- your GearScore and item level in the footer
     collapsed = {},        -- details panel sections folded by the user
     templates = {
         group = "Hi! {spec} {class}, {ilvl} ilvl - interested in your {raid} group.",
@@ -1048,6 +1049,44 @@ end
 -- Your spec and role for whisper templates, judged the same way as listed
 -- players: no spec with no talents spent or a tie between trees. When talents
 -- don't settle the role, fall back to the roles picked for the Raid Browser.
+-- Your GearScore: the installed GearScore / GearScoreLite addon's own number
+-- when there is one, else the same formula worked out here. The second return
+-- says which: "addon", "calc", or "partial" (some items not loaded yet).
+function RBP:PlayerGearScore()
+    if type(GearScore_GetScore) == "function" then
+        local ok, gs = pcall(GearScore_GetScore, UnitName("player"), "player")
+        if ok and tonumber(gs) then return math.max(0, floor(tonumber(gs))), "addon" end
+    end
+    local scores, locs, has, partial = {}, {}, {}, false
+    for slot = 1, 18 do
+        local link = slot ~= 4 and GetInventoryItemLink("player", slot)
+        if link then
+            has[slot] = true
+            local _, _, quality, ilvl, _, _, _, _, equipLoc = GetItemInfo(link)
+            if quality then
+                local enchant = tonumber(link:match("item:%-?%d+:(%-?%d+)")) or 0
+                scores[slot], locs[slot] = RBP.GearScoreItem(quality, ilvl, equipLoc, enchant ~= 0), equipLoc
+            else
+                partial = true
+            end
+        end
+    end
+    -- Titan's Grip: two two-handers count half each
+    local grip = ((locs[16] == "INVTYPE_2HWEAPON" and has[17]) or locs[17] == "INVTYPE_2HWEAPON") and 0.5 or 1
+    local hunter = select(2, UnitClass("player")) == "HUNTER"
+    local total = 0
+    for slot, score in pairs(scores) do
+        if slot == 16 or slot == 17 then
+            if hunter then score = score * 0.3164 end
+            score = score * grip
+        elseif slot == 18 and hunter then
+            score = score * 5.3224
+        end
+        total = total + score
+    end
+    return floor(total), partial and "partial" or "calc"
+end
+
 function RBP:PlayerSpec()
     local className, classToken = UnitClass("player")
     local pts, names = {}, {}
@@ -1082,6 +1121,7 @@ function RBP:FormatTemplate(kind, e)
         class = class or "",
         ilvl = format("%d", floor(self:PlayerItemLevel())), -- the list drops decimals too
         role = role and ROLE_WORD[role] or "",
+        gs = format("%d", (self:PlayerGearScore())),
     }
     local out = t:gsub("{(%w+)}", function(k) return vals[k] or ("{" .. k .. "}") end)
     -- an empty token can leave doubled or edge spaces
@@ -1162,6 +1202,10 @@ function RBP:Slash(msg)
         end
     elseif cmd == "dump" then
         self:Dump(rest)
+    elseif cmd == "gs" or cmd == "gearscore" then
+        self.db.showGearScore = not self.db.showGearScore
+        self:RequestRefresh()
+        self:Print("your GearScore and item level are %s in the footer.", self.db.showGearScore and "shown" or "hidden")
     elseif cmd == "allstats" then
         self:SetShowAllStats(not self.db.showAllStats)
         self:Print("details show %s.", self.db.showAllStats and "every stat" or "only the stats relevant to class and spec")
@@ -1186,7 +1230,7 @@ function RBP:Slash(msg)
             self.db.templates[kind] = text
             self:Print("%s template set.", kind)
         else
-            self:Print("templates (tokens: {name} {raid} {spec} {class} {ilvl} {role}):")
+            self:Print("templates (tokens: {name} {raid} {spec} {class} {ilvl} {gs} {role}):")
             self:Print("  group: %s", self.db.templates.group)
             self:Print("  player: %s", self.db.templates.player)
             self:Print("set with /rbp template group|player <text>")
@@ -1207,7 +1251,7 @@ function RBP:Slash(msg)
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp - toggle the window   /rbp scan - all raids / load the next raid")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp alert - toggle new-listing alerts   /rbp sound - alert sound")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp template [group|player <text>] - whisper templates")
-        DEFAULT_CHAT_FRAME:AddMessage("  /rbp scope level|all   /rbp ignored   /rbp allstats")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rbp scope level|all   /rbp ignored   /rbp allstats   /rbp gs - your GearScore")
         DEFAULT_CHAT_FRAME:AddMessage("  /rbp dump [n] - print raw API returns   /rbp reset")
     end
 end
@@ -1248,6 +1292,7 @@ events:RegisterEvent("RAID_ROSTER_UPDATE")
 events:RegisterEvent("FRIENDLIST_UPDATE")
 events:RegisterEvent("GUILD_ROSTER_UPDATE")
 events:RegisterEvent("IGNORELIST_UPDATE")
+events:RegisterEvent("UNIT_INVENTORY_CHANGED")
 events:SetScript("OnEvent", function(_, event, ...)
     RBP:OnEvent(event, ...)
 end)
@@ -1290,6 +1335,8 @@ function RBP:OnEvent(event, arg1)
         self:RequestRefresh()
     elseif event == "FRIENDLIST_UPDATE" or event == "GUILD_ROSTER_UPDATE" or event == "IGNORELIST_UPDATE" then
         self:RebuildRelations()
+    elseif event == "UNIT_INVENTORY_CHANGED" then
+        if arg1 == "player" and self.db and self.db.showGearScore then self:RequestRefresh() end
     end
 end
 
