@@ -71,6 +71,7 @@ The addon only trusts the stat block when the talent and item-level returns hold
 ## Notes
 
 - Spec names are English and use the 3.3.5 talent tab order. Composition counts are inferences. Warlocks, mages, hunters and rogues always count as damage. Hybrid classes with no talents spent show as "?", and so do Blood/Frost DKs and Feral druids unless defense or armor settles it. Members without stats (offline since the group was listed) can only be judged by class.
+- `{ilvl}` in whisper templates is your item level counted the way the list counts it, so it matches what others see next to your name. It averages 15 slots (shirt, tabard, off-hand and ranged excluded; empty slots count as 0). Epic and better count as is, rare items 13 levels lower, uncommon and below 26 lower, and heirlooms as 2.33 × your level. Decimals are dropped. A character in mostly blues therefore shows about 10 to 13 below the plain average of their item levels.
 - Defense rating is converted to defense points with the 3.x rating formula (4.92 rating per point at 80). A non-druid with +140 defense (689 rating at 80) is marked crit-immune, which assumes their base defense skill is maxed.
 - The client keeps only one raid's list, the one it last asked for. That's why all-raids mode merges lists loaded one at a time, and why only the last raid loaded gets live updates. Groups are keyed by leader name.
 - Alerts keep watching the raid you last loaded while the window is closed. After a relog, open the window once to start watching again, since that request needs a click or key press.

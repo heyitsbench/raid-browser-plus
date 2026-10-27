@@ -1020,15 +1020,26 @@ end
 ---------------------------------------------------------------------------
 local INV_SLOTS = { 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }
 
+-- Item level counted per item by quality, the way the listed item level is:
+-- epic and better as is, rare 13 lower, uncommon and below 26 lower,
+-- heirlooms 2.33 x character level, never below 0.
+local QUALITY_OFFSET = { [0] = -26, [1] = -26, [2] = -26, [3] = -13 }
+local HEIRLOOM = 7
+
+function RBP.CountedItemLevel(quality, ilvl, playerLevel)
+    if quality == HEIRLOOM then return playerLevel * 2.33 end
+    return math.max(0, (ilvl or 0) + (QUALITY_OFFSET[quality] or 0))
+end
+
 -- Average over 15 slots (empty = 0; shirt, tabard, off-hand and ranged
 -- excluded), so it matches the item level others see in the list.
 function RBP:PlayerItemLevel()
-    local sum = 0
+    local sum, level = 0, UnitLevel("player") or 0
     for _, slot in ipairs(INV_SLOTS) do
         local link = GetInventoryItemLink("player", slot)
         if link then
-            local _, _, _, ilvl = GetItemInfo(link)
-            sum = sum + (ilvl or 0)
+            local _, _, quality, ilvl = GetItemInfo(link)
+            sum = sum + RBP.CountedItemLevel(quality, ilvl, level)
         end
     end
     return sum / #INV_SLOTS
@@ -1069,7 +1080,7 @@ function RBP:FormatTemplate(kind, e)
         raid = self:RaidLabel(e.raidId),
         spec = spec or "",
         class = class or "",
-        ilvl = format("%d", floor(self:PlayerItemLevel() + 0.5)),
+        ilvl = format("%d", floor(self:PlayerItemLevel())), -- the list drops decimals too
         role = role and ROLE_WORD[role] or "",
     }
     local out = t:gsub("{(%w+)}", function(k) return vals[k] or ("{" .. k .. "}") end)
