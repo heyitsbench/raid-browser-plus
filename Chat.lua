@@ -519,6 +519,12 @@ function RBP:OnChatMessage(event, msg, author, channelName, guid)
     if not author or author == "" or not self:ChatSourceAllowed(event, channelName) then return end
     local ad = RBP.ParseAd(msg)
     if not ad or not self.db.chat[ad.kind] then return end
+    local className, class
+    if guid and guid ~= "" and GetPlayerInfoByGUID then className, class = GetPlayerInfoByGUID(guid) end
+    self:StoreChatAd(ad, msg, author, SOURCE_LABEL[event] or ChannelBase(channelName), class, className)
+end
+
+function RBP:StoreChatAd(ad, msg, author, source, class, className)
     local now = GetTime()
     local key = ad.kind .. ":" .. author
     local rec = self.chatAds[key]
@@ -528,14 +534,12 @@ function RBP:OnChatMessage(event, msg, author, channelName, guid)
     end
     rec.name, rec.kind, rec.ad, rec.text, rec.seen = author, ad.kind, ad, msg, now
     rec.posts = rec.posts + 1
-    rec.source = SOURCE_LABEL[event] or ChannelBase(channelName)
-    if guid and guid ~= "" and GetPlayerInfoByGUID then
-        local className, class = GetPlayerInfoByGUID(guid)
-        if class then rec.class, rec.className = class, className end
-    end
+    rec.source = source
+    if class then rec.class, rec.className = class, className end
     rec.entry = nil -- rebuilt on the next refresh
     self.chatDirty = true
     if now - (self.chatPruned or 0) > 30 then self:PruneChatAds() end
+    return rec
 end
 
 function RBP:ChatExpire()
@@ -556,7 +560,7 @@ function RBP:ChatRaidIds(code, size)
     local ids = {}
     for _, id in ipairs(self.raidOrder or {}) do
         local raid = self.raids[id]
-        if raid and RBP.RAID_SHORT[raid.name] == code and (not size or raid.maxPlayers == size) then ids[#ids + 1] = id end
+        if raid and RBP.RaidCodeOf(raid) == code and (not size or raid.maxPlayers == size) then ids[#ids + 1] = id end
     end
     if #ids == 0 and code == "ToGC" then return self:ChatRaidIds("ToC", size) end
     return ids
@@ -608,7 +612,7 @@ function RBP:ChatEntry(rec)
     e.raidShort = e.raidLabels[1] .. (#e.raidLabels > 1 and (" +" .. (#e.raidLabels - 1)) or "")
     if first then
         -- "Icecrown Citadel (25) heroic"; the Grand Crusader raid says it already
-        local heroic = (e.heroic and RBP.RAID_SHORT[first.name] ~= "ToGC") and " heroic" or ""
+        local heroic = (e.heroic and RBP.RaidCodeOf(first) ~= "ToGC") and " heroic" or ""
         e.raidLabel = (e.raidId and self:RaidLabel(e.raidId) or first.name) .. heroic
     else
         e.raidLabel = e.raidLabels[1]
@@ -654,6 +658,33 @@ end)
 -- /rbp chat
 ---------------------------------------------------------------------------
 local function OnOff(v) return v and "on" or "off" end
+local ROLE_NAME = { TANK = { "tank", "tanks" }, HEALER = { "healer", "healers" }, DAMAGER = { "damage", "damage" } }
+
+-- How an ad was read, in words (/rbp chat test)
+function RBP:ChatAdSummary(ad)
+    local parts = { ad.kind == "lfm" and "a group recruiting" or "a player looking for a raid" }
+    local raids = {}
+    for _, r in ipairs(ad.raids) do raids[#raids + 1] = RaidText(r, r.sizes) end
+    parts[#parts + 1] = "raid " .. table.concat(raids, ", ")
+    local roles = {}
+    if ad.anyRole then
+        roles[1] = "any role"
+    else
+        for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+            local v = ad.roles[role]
+            if type(v) == "number" then
+                roles[#roles + 1] = v .. " " .. ROLE_NAME[role][v > 1 and 2 or 1]
+            elseif v then
+                roles[#roles + 1] = ROLE_NAME[role][1]
+            end
+        end
+    end
+    if #roles > 0 then parts[#parts + 1] = (ad.kind == "lfm" and "needs " or "plays ") .. table.concat(roles, ", ") end
+    if ad.gs then parts[#parts + 1] = format("GearScore %.1fk", ad.gs / 1000) end
+    if ad.fill then parts[#parts + 1] = "members " .. ad.fill end
+    if ad.progress then parts[#parts + 1] = "progress " .. ad.progress end
+    return table.concat(parts, "; ")
+end
 
 function RBP:ChatStatus()
     local c = self.db.chat
@@ -692,9 +723,36 @@ function RBP:ChatCommand(rest)
         c.list[name] = (not c.list[name]) and true or nil
     elseif sub == "expire" and tonumber(arg) then
         c.expire = math.min(60, math.max(1, floor(tonumber(arg))))
+    elseif sub == "test" and arg ~= "" then
+        -- read a message as if it was posted, and list it as your own ad
+        local text = (rest or ""):match("^%S+%s+(.-)%s*$") or ""
+        local ad = RBP.ParseAd(text)
+        if not ad then
+            self:Print("not read as a raid ad: it names no raid, or reads as a sale, guild recruitment, a question "
+                .. "or chatter.")
+            return
+        end
+        self:Print("read as %s.", self:ChatAdSummary(ad))
+        local className, class = UnitClass("player")
+        local me = self.playerName or UnitName("player")
+        local rec = self:StoreChatAd(ad, text, me, "test", class, className)
+        local e = self:ChatEntry(rec)
+        local why, forShown = nil, false
+        for _, id in ipairs(e.raidIds) do if id == self.currentRaid then forShown = true end end
+        if not (c.enabled and c[ad.kind] and self.db.filters.chat) then
+            why = "your chat ad settings hide this kind of ad"
+        elseif self.mode ~= "all" and not forShown then
+            why = "it is for " .. table.concat(e.raidLabels, ", ") .. ", not the raid you are viewing"
+        elseif not self:PassesFilters(e) then
+            why = "the filters (players/groups, roles, item level, search) hide it"
+        end
+        if why then self:Print("it isn't in the list: %s.", why) end
+        self:RequestRefresh()
+        return
     elseif sub ~= "" then
         self:Print("chat commands: /rbp chat [on|off|lfm|lf|yell|guild], /rbp chat channels all|named, "
-            .. "/rbp chat channel <name> (leave out a channel, or with 'named' read it), /rbp chat expire <minutes>")
+            .. "/rbp chat channel <name> (leave out a channel, or with 'named' read it), /rbp chat expire <minutes>, "
+            .. "/rbp chat test <message> (shows how a message is read and lists it as your ad)")
         return
     end
     self:PruneChatAds()

@@ -172,6 +172,14 @@ function RBP:AddRaid(id, d)
         minLevel = d[3] or 0, maxLevel = d[4] or 999, recLevel = d[5] or 0,
         groupID = d[9] or 0, maxPlayers = d[12] or 0,
     }
+    -- Short code ("ICC"). Heroic Trial of the Crusader is the one Wrath raid
+    -- the Raid Browser lists at a heroic difficulty (10 heroic = 2, 25 heroic
+    -- = 3); only its English name is in RAID_SHORT, so on other clients it is
+    -- told by that.
+    raid.code = RBP.RaidCode(raid.name)
+    if (raid.code == "ToC" or (raid.code == nil and d[8] == 2)) and (tonumber(d[11]) or 0) >= 2 then
+        raid.code = "ToGC"
+    end
     self.raids[id] = raid
     return raid
 end
@@ -246,7 +254,7 @@ end
 function RBP:RaidShort(id)
     local raid = self:GetRaid(id)
     if not raid then return tostring(id) end
-    local short = RBP.RAID_SHORT[raid.name] or raid.name
+    local short = RBP.RaidCodeOf(raid) or raid.name
     if (raid.maxPlayers or 0) > 0 then
         return short .. " " .. raid.maxPlayers
     end
@@ -918,6 +926,7 @@ function RBP:OnWindowShown()
     -- meantime, start over so everyone listed during the gap isn't flagged.
     if not (SearchLFGGetJoinedID and SearchLFGGetJoinedID()) then wipe(self.seen) end
     self:EnsureRaids()
+    self:RequestLockouts() -- a boss killed since login changes them
     if self.mode == "all" then
         self:ScanStep()
     elseif self.currentRaid then
@@ -1180,7 +1189,58 @@ end
 
 local ROLE_WORD = { TANK = "tank", HEALER = "healer", DAMAGER = "dps" }
 
-function RBP:FormatTemplate(kind, e)
+-- A listing's raid as a short code, size and whether it is a heroic run
+-- ("ICC", 25, true), for chat ads too.
+function RBP:EntryRaid(e)
+    if e.isChat then return e.raidCode, (e.maxPlayers or 0) > 0 and e.maxPlayers or nil, e.heroic == true end
+    local raid = self:GetRaid(e.raidId)
+    if raid then return RBP.RaidCodeOf(raid), (raid.maxPlayers or 0) > 0 and raid.maxPlayers or nil, RBP.SaysHeroic(e.comment) end
+end
+
+-- "hc" or "heroic" in a listing's comment
+function RBP.SaysHeroic(text)
+    local s = " " .. RBP.Lower(text or "") .. " "
+    return (s:find("[^%a]hc[^%a]") or s:find("heroic", 1, true)) and true or false
+end
+
+-- Your best achievement for a raid, as a link ({achi}): the best one done,
+-- trying the run's size first in each tier; otherwise the best one with some
+-- progress, since its link shows the bosses you have killed. Nil when there
+-- is none. Heroic runs rank heroic achievements higher.
+function RBP:AchievementLink(code, size, heroic)
+    local tiers = code and RBP.RAID_ACHIEVEMENTS[code]
+    if not (tiers and GetAchievementInfo and GetAchievementLink) then return nil end
+    local order = not heroic and RBP.RAID_ACHIEVEMENTS_NORMAL_ORDER[code]
+    if order then
+        local sorted = {}
+        for i, n in ipairs(order) do sorted[i] = tiers[n] end
+        tiers = sorted
+    end
+    local english = GetLocale and GetLocale() == "enUS"
+    local sizes = size == 10 and { 10, 25 } or { 25, 10 }
+    local partial
+    for _, tier in ipairs(tiers) do
+        for _, sz in ipairs(sizes) do
+            local id = tier[sz]
+            local _, name, _, completed = GetAchievementInfo(id)
+            -- on English clients, skip an id whose name isn't the one expected
+            if name and not (english and RBP.Lower(name) ~= RBP.Lower(tier.names[sz])) then
+                if completed then return GetAchievementLink(id) end
+                if not partial and GetAchievementNumCriteria and GetAchievementCriteriaInfo then
+                    for j = 1, GetAchievementNumCriteria(id) or 0 do
+                        local _, _, done = GetAchievementCriteriaInfo(id, j)
+                        if done then partial = id; break end
+                    end
+                end
+            end
+        end
+    end
+    return partial and GetAchievementLink(partial) or nil
+end
+
+-- noLinks leaves {achi} empty (a whisper too long for the chat box would cut
+-- the link, and the server drops a message with a broken link).
+function RBP:FormatTemplate(kind, e, noLinks)
     local t = self.db.templates[kind] or ""
     local spec, class, role = self:PlayerSpec()
     local vals = {
@@ -1192,16 +1252,94 @@ function RBP:FormatTemplate(kind, e)
         role = role and ROLE_WORD[role] or "",
         gs = format("%d", (self:PlayerGearScore())),
     }
+    if t:find("{achi}", 1, true) then
+        vals.achi = (not noLinks and self:AchievementLink(self:EntryRaid(e))) or ""
+    end
     local out = t:gsub("{(%w+)}", function(k) return vals[k] or ("{" .. k .. "}") end)
     -- an empty token can leave doubled or edge spaces
     out = out:gsub("%s%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
     return out
 end
 
-function RBP:OpenTemplateWhisper(e)
+-- The chat box holds 255 letters, the "/w Name " in front included. Counted
+-- in bytes, which is never less than letters, so a link is only ever dropped
+-- early, never cut.
+local CHAT_BOX_LETTERS = 255
+
+-- The whisper an Ask to join / Recruit click opens, without the "/w Name ".
+function RBP:TemplateWhisper(e)
     local kind = e.isGroup and "group" or "player"
+    local prefix = (SLASH_WHISPER1 or "/w") .. " " .. e.name .. " "
     local msg = self:FormatTemplate(kind, e)
-    ChatFrame_OpenChat((SLASH_WHISPER1 or "/w") .. " " .. e.name .. " " .. msg)
+    if #prefix + #msg > CHAT_BOX_LETTERS and msg:find("|H", 1, true) then msg = self:FormatTemplate(kind, e, true) end
+    return msg, prefix
+end
+
+function RBP:OpenTemplateWhisper(e)
+    local msg, prefix = self:TemplateWhisper(e)
+    ChatFrame_OpenChat(prefix .. msg)
+end
+
+---------------------------------------------------------------------------
+-- People you whispered or who whispered you, this session (marked in the list)
+---------------------------------------------------------------------------
+RBP.contacts = {}
+RBP.CONTACT_SHOW = 3600 -- marks go after an hour without whispers
+
+function RBP:OnWhisper(event, name)
+    if not name or name == "" then return end
+    local c = self.contacts[name]
+    if not c then c = {}; self.contacts[name] = c end
+    if event == "CHAT_MSG_WHISPER_INFORM" then c.sent = GetTime() else c.received = GetTime() end
+    self:RequestRefresh()
+end
+
+-- { sent = time?, received = time? }, each only while under an hour old;
+-- nil when neither is
+function RBP:Contact(name)
+    local c = name and self.contacts[name]
+    if not c then return nil end
+    local now = GetTime()
+    local sent = c.sent and now - c.sent <= RBP.CONTACT_SHOW and c.sent or nil
+    local received = c.received and now - c.received <= RBP.CONTACT_SHOW and c.received or nil
+    if not (sent or received) then return nil end
+    return { sent = sent, received = received }
+end
+
+---------------------------------------------------------------------------
+-- Your raid lockouts, keyed by raid code and size ("ICC:25"); heroic Trial of
+-- the Crusader is saved separately, as "ToGC:25".
+---------------------------------------------------------------------------
+RBP.lockouts = {}
+
+function RBP:RequestLockouts()
+    if not RequestRaidInfo then return end
+    local now = GetTime()
+    if self.lockoutsAsked and now - self.lockoutsAsked < 60 then return end
+    self.lockoutsAsked = now
+    RequestRaidInfo()
+end
+
+function RBP:UpdateLockouts()
+    local saved, now = {}, GetTime()
+    for i = 1, (GetNumSavedInstances and GetNumSavedInstances() or 0) do
+        local name, _, reset, difficulty, locked, extended, _, isRaid, maxPlayers = GetSavedInstanceInfo(i)
+        if name and (locked or extended) and isRaid then
+            local code = RBP.RaidCode(name)
+            if code == "ToC" and (difficulty == 3 or difficulty == 4) then code = "ToGC" end
+            saved[(code or RBP.Lower(name)) .. ":" .. tostring(maxPlayers or 0)] = { name = name, resetAt = now + (reset or 0) }
+        end
+    end
+    self.lockouts = saved
+    self:RequestRefresh()
+end
+
+-- Your lockout for a Raid Browser raid, or nil
+function RBP:LockoutFor(raidId)
+    local raid = self:GetRaid(raidId)
+    if not raid then return nil end
+    local l = self.lockouts[(RBP.RaidCodeOf(raid) or RBP.Lower(raid.name)) .. ":" .. tostring(raid.maxPlayers or 0)]
+    if l and l.resetAt > GetTime() then return l end
 end
 
 ---------------------------------------------------------------------------
@@ -1304,7 +1442,7 @@ function RBP:Slash(msg)
             self.db.templates[kind] = text
             self:Print("%s template set.", kind)
         else
-            self:Print("templates (tokens: {name} {raid} {spec} {class} {ilvl} {gs} {role}):")
+            self:Print("templates (tokens: {name} {raid} {spec} {class} {ilvl} {gs} {role} {achi}):")
             self:Print("  group: %s", self.db.templates.group)
             self:Print("  player: %s", self.db.templates.player)
             self:Print("set with /rbp template group|player <text>")
@@ -1368,11 +1506,14 @@ events:RegisterEvent("FRIENDLIST_UPDATE")
 events:RegisterEvent("GUILD_ROSTER_UPDATE")
 events:RegisterEvent("IGNORELIST_UPDATE")
 events:RegisterEvent("UNIT_INVENTORY_CHANGED")
+events:RegisterEvent("CHAT_MSG_WHISPER")
+events:RegisterEvent("CHAT_MSG_WHISPER_INFORM")
+events:RegisterEvent("UPDATE_INSTANCE_INFO")
 events:SetScript("OnEvent", function(_, event, ...)
     RBP:OnEvent(event, ...)
 end)
 
-function RBP:OnEvent(event, arg1)
+function RBP:OnEvent(event, arg1, arg2)
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then return end
         RaidBrowserPlusDB = merge(RaidBrowserPlusDB or {}, DEFAULTS)
@@ -1396,6 +1537,7 @@ function RBP:OnEvent(event, arg1)
         if ShowFriends then ShowFriends() end
         if IsInGuild and IsInGuild() and GuildRoster then GuildRoster() end
         self:RebuildRelations()
+        self:RequestLockouts()
         if self.db.alert then
             -- Browsing needs a click or key press, so it can't resume on its own.
             self:Print("alerts are on; open the window (/rbp) to start watching.")
@@ -1412,6 +1554,10 @@ function RBP:OnEvent(event, arg1)
         self:RebuildRelations()
     elseif event == "UNIT_INVENTORY_CHANGED" then
         if arg1 == "player" and self.db and self.db.showGearScore then self:RequestRefresh() end
+    elseif event == "CHAT_MSG_WHISPER" or event == "CHAT_MSG_WHISPER_INFORM" then
+        self:OnWhisper(event, arg2)
+    elseif event == "UPDATE_INSTANCE_INFO" then
+        self:UpdateLockouts()
     end
 end
 

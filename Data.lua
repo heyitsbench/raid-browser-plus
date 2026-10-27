@@ -298,6 +298,61 @@ for name, short in pairs({
     ["줄구룹"] = "ZG",
 }) do RBP.RAID_SHORT[name] = short end
 
+-- A raid's short code from its name, also for zone names with a prefix
+-- ("Coilfang: Serpentshrine Cavern", as saved instances name it).
+function RBP.RaidCode(name)
+    if not name then return nil end
+    return RBP.RAID_SHORT[name] or RBP.RAID_SHORT[name:match(":%s*(.-)$") or ""]
+end
+
+-- A Raid Browser raid's code (set when the raid list is read; see AddRaid)
+function RBP.RaidCodeOf(raid)
+    return raid and (raid.code or RBP.RaidCode(raid.name))
+end
+
+---------------------------------------------------------------------------
+-- Achievements for {achi} in whisper templates, best first. Each tier holds
+-- the 10- and 25-player achievement and their English names, used to check
+-- the ids on English clients. Ids as the RaidBrowser addon for 3.3.5 uses
+-- them (MIT).
+---------------------------------------------------------------------------
+local function Tier(id10, id25, name10, name25)
+    return { [10] = id10, [25] = id25,
+             names = { [10] = string.format(name10, 10), [25] = string.format(name25 or name10, 25) } }
+end
+RBP.RAID_ACHIEVEMENTS = {
+    ICC = {
+        Tier(4636, 4637, "Heroic: Fall of the Lich King (%d player)"),
+        Tier(4583, 4584, "Bane of the Fallen King", "The Light of Dawn"),
+        Tier(4631, 4635, "Heroic: The Frostwing Halls (%d player)"),
+        Tier(4630, 4634, "Heroic: The Crimson Hall (%d player)"),
+        Tier(4629, 4633, "Heroic: The Plagueworks (%d player)"),
+        Tier(4628, 4632, "Heroic: Storming the Citadel (%d player)"),
+        Tier(4532, 4608, "Fall of the Lich King (%d player)"),
+        Tier(4530, 4597, "The Frozen Throne (%d player)"),
+        Tier(4527, 4607, "The Frostwing Halls (%d player)"),
+        Tier(4529, 4606, "The Crimson Hall (%d player)"),
+        Tier(4528, 4605, "The Plagueworks (%d player)"),
+        Tier(4531, 4604, "Storming the Citadel (%d player)"),
+    },
+    ToC = {
+        Tier(3918, 3812, "Call of the Grand Crusade (%d player)"),
+        Tier(3917, 3916, "Call of the Crusade (%d player)"),
+    },
+    RS = {
+        Tier(4818, 4816, "Heroic: The Twilight Destroyer (%d player)"),
+        Tier(4817, 4815, "The Twilight Destroyer (%d player)"),
+    },
+    Ulduar = { Tier(2886, 2887, "The Siege of Ulduar (%d player)") },
+    Naxx = { Tier(576, 577, "The Fall of Naxxramas (%d player)") },
+    OS = { Tier(1876, 625, "Besting the Black Dragonflight (%d player)") },
+    Ony = { Tier(4396, 4397, "Onyxia's Lair (%d player)") },
+}
+RBP.RAID_ACHIEVEMENTS.ToGC = RBP.RAID_ACHIEVEMENTS.ToC
+-- For runs not called heroic: killing the Lich King on normal counts for more
+-- than the heroic wings (positions in the list above).
+RBP.RAID_ACHIEVEMENTS_NORMAL_ORDER = { ICC = { 1, 2, 7, 8, 3, 4, 5, 6, 9, 10, 11, 12 } }
+
 ---------------------------------------------------------------------------
 -- Combat rating conversion (3.x formula), used to turn the defense rating
 -- the server sends into defense skill points.

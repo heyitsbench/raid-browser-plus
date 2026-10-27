@@ -26,7 +26,9 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 - **Details panel.** The full comment, boss-by-boss lockout, and combat stats in a two-column grid with gold labels and white values. Only the stats that matter for the class and spec are shown: physical (agility, attack power, expertise), spell (spell power, MP5), and defense (defense rating with a crit-immune check, dodge, parry, block). Relevant stats at 0 still show. The *show all* link on the Stats or Roster header (or `/rbp allstats`) lists every stat regardless of class and spec. Groups show everyone, leader included, in the roster with spec, item level, role and friend/guild tags. Click a name to expand that player's zone and stats, or use *expand all*. Each time you select a listing, a group opens with every roster row collapsed and a solo player opens with Stats expanded. Click any section header (Comment, Bosses, Stats, Roster) to collapse it. Folded Comment, Bosses, Roster and Listed for sections stay folded across listings; Stats resets per listing. Drag the divider between the list and the details to widen the pane (270 to 500 px, as far as the list's minimum width allows), or double-click it to reset; the width is saved with the window.
 - **Group composition.** Tank/healer/damage counts are inferred from each member's talent split. Defense and bear-form armor settle DK and druid tanks, and any warrior, paladin or DK with +100 defense counts as a tank. Groups also show size (e.g. 11/25) and average item level.
 - **Who's new.** Listings that appear while you browse get a green marker. Turn on *Alert on new* to get a sound and a chat line when a listing that matches your filters shows up. While alerts are on, the addon keeps browsing in the background.
-- **Actions.** Whisper (or double-click a row), Invite, and a ready-to-edit *Ask to join* / *Recruit* whisper from a template (`/rbp template`). Right-click a row for a menu with Who and Add Friend.
+- **Actions.** Whisper (or double-click a row), Invite, and a ready-to-edit *Ask to join* / *Recruit* whisper from a template (`/rbp template`). `{achi}` in a template links your best achievement for that raid. Right-click a row for a menu with Who and Add Friend.
+- **Who you've talked to.** Rows of people you've whispered with get a mark after the name, set by the latest whisper: a yellow ? after yours (waiting for a reply), a green check after theirs. The tooltip and details say when each was. A whisper stops counting after an hour, and the marks aren't saved.
+- **Your lockouts.** Raids you're saved to say *saved* in the raid menu. A listing for one of them shows *Your lockout* with the time until reset in its details.
 - **Your listing.** The footer shows whether you are listed and for which raids. From there you can change your comment, unlist, or open Blizzard's sign-up tab. `/rbp gs` also shows your GearScore and item level there.
 
 ## Commands
@@ -36,7 +38,7 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 | `/rbp` | Toggle the window |
 | `/rbp scan` | Switch to all raids, or load the next raid if already there |
 | `/rbp alert`, `/rbp sound` | Toggle new-listing alerts and their sound |
-| `/rbp template [group\|player <text>]` | Show or set whisper templates. Tokens: `{name} {raid} {spec} {class} {ilvl} {gs} {role}` |
+| `/rbp template [group\|player <text>]` | Show or set whisper templates. Tokens: `{name} {raid} {spec} {class} {ilvl} {gs} {role} {achi}` |
 | `/rbp scope level\|all` | Which raids the all-raids view covers |
 | `/rbp ignored` | Show or hide players on your ignore list |
 | `/rbp gs` | Show or hide your GearScore and item level in the footer |
@@ -45,6 +47,7 @@ Copy the `raid-browser-plus` folder into `World of Warcraft/Interface/AddOns/` a
 | `/rbp chat channels all\|named` | Read every public channel (the channel list holds the ones left out) or only the channels on the list. Switching clears the list. |
 | `/rbp chat channel <name>` | Add a channel to the list or take it off (e.g. `/rbp chat channel trade`) |
 | `/rbp chat expire <minutes>` | How long an ad stays after its last post (1 to 60, default 5) |
+| `/rbp chat test <message>` | Show how a message would be read, and list it as your own ad |
 | `/rbp allstats` | Toggle between every stat and only the stats relevant to class and spec |
 | `/rbp dump [n]` | Print the raw API returns for the first *n* results and save them to SavedVariables |
 | `/rbp reset` | Reset settings and window position |
@@ -83,6 +86,7 @@ The addon only trusts the stat block when the talent and item-level returns hold
 ## Notes
 
 - Spec names are English and use the 3.3.5 talent tab order. Composition counts are inferences. Warlocks, mages, hunters and rogues always count as damage. Hybrid classes with no talents spent show as "?", and so do Blood/Frost DKs and Feral druids unless defense or armor settles it. Members without stats (offline since the group was listed) can only be judged by class.
+- `{achi}` links your best achievement for the listing's raid: ICC, ToC, RS, Ulduar, Naxxramas, OS and Onyxia. It goes down the raid's achievements from best to least, trying the run's size first at each step. For ICC that is Heroic: Fall of the Lich King, then the heroic Lich King kill, then Fall of the Lich King, The Frozen Throne, the heroic wings and the normal wings. For a heroic run (a chat ad saying so, or *hc*/*heroic* in a listing's comment), the heroic wings come before Fall of the Lich King. For Ulduar it can only link The Siege of Ulduar, which covers the first four bosses. If you've completed none of them, it links the best one you have progress on, because that link shows the bosses you've killed. Otherwise it is left empty. If the whisper would go over the 255 characters the chat box holds, the link is left out, because a cut-off link stops the message from sending. On English clients, an achievement whose name doesn't match the expected one is skipped.
 - `{ilvl}` in whisper templates is your item level counted the way the list counts it, so it matches what others see next to your name. It averages 15 slots (shirt, tabard, off-hand and ranged excluded; empty slots count as 0). Epic and better count as is, rare items 13 levels lower, uncommon and below 26 lower, and heirlooms as 2.33 × your level. Decimals are dropped. A character in mostly blues therefore shows about 10 to 13 below the plain average of their item levels.
 - Your GearScore (footer and `{gs}`) comes from the GearScore or GearScoreLite addon when one is installed, so it matches what that addon shows. Without one, the addon works it out with the same formula, including the lower score for enchantable items without an enchant. The server doesn't send other players' gear, so GearScore is only available for you.
 - Defense rating is converted to defense points with the 3.x rating formula (4.92 rating per point at 80). A non-druid with +140 defense (689 rating at 80) is marked crit-immune, which assumes their base defense skill is maxed.

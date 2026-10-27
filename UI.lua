@@ -117,6 +117,44 @@ end
 
 local function Col(hex, s) return "|cff" .. hex .. tostring(s) .. "|r" end
 
+-- Marks after a name: also advertising in chat, you whispered them (waiting),
+-- they whispered you.
+local WAITING_ICON, REPLIED_ICON = "Interface\\RaidFrame\\ReadyCheck-Waiting", "Interface\\RaidFrame\\ReadyCheck-Ready"
+local function NameMarks(e)
+    local t = ""
+    if e.chatAd then t = t .. " |T" .. RBP.CHAT_ICON .. ":11:11|t" end
+    local c = RBP:Contact(e.name)
+    if c then
+        -- the latest whisper decides: theirs is a reply, yours waits for one
+        local replied = c.received and c.received >= (c.sent or 0)
+        t = t .. " |T" .. (replied and REPLIED_ICON or WAITING_ICON) .. ":11:11|t"
+    end
+    return t
+end
+
+-- "sent 3m ago, received 1m ago"; exact (tooltips) or by the minute (details)
+local function ContactText(c, ago)
+    local now, t = GetTime(), {}
+    if c.sent then t[#t + 1] = "you whispered " .. ago(floor(now - c.sent)) end
+    if c.received then t[#t + 1] = "they whispered " .. ago(floor(now - c.received)) end
+    return table.concat(t, ", ")
+end
+
+-- Your lockouts among some Raid Browser raids, or nil
+local function LockoutText(ids)
+    local t = {}
+    for _, id in ipairs(ids) do
+        local l = id and RBP:LockoutFor(id)
+        if l then
+            local left = math.max(0, l.resetAt - GetTime())
+            local reset = left < 60 and "under a minute"
+                or (SecondsToTime and SecondsToTime(left, true, nil, 2) or Ago(left))
+            t[#t + 1] = (#ids > 1 and (RBP:RaidLabel(id) .. ": ") or "") .. "saved, resets in " .. reset
+        end
+    end
+    return #t > 0 and Col(C.warn, table.concat(t, "; ")) or nil
+end
+
 local function FmtIlvl(v)
     if v == floor(v) then return format("%d", v) end
     return format("%.1f", v)
@@ -739,7 +777,9 @@ function UI:CreateDetails()
     SetTip(d.ask, function() return d.ask:GetText() end, function()
         local e = UI.detailEntry
         if not e then return nil end
-        return "Opens a whisper you can edit before sending:\n|cffffffff" .. RBP:FormatTemplate(e.isGroup and "group" or "player", e)
+        -- a link ends with |r, so the white is set again after it
+        local msg = RBP:TemplateWhisper(e):gsub("|r", "|r|cffffffff")
+        return "Opens a whisper you can edit before sending:\n|cffffffff" .. msg
             .. "|r\n\nChange it with /rbp template " .. (e.isGroup and "group" or "player") .. " <text>."
     end)
 
@@ -1111,7 +1151,7 @@ function UI:SetRow(row, e)
     local dim = e.isSelf
 
     -- a small chat icon after the name: also advertising in chat (see details)
-    cells.name:SetText(Col(NameColor(e), e.name) .. (e.chatAd and (" |T" .. RBP.CHAT_ICON .. ":11:11|t") or ""))
+    cells.name:SetText(Col(NameColor(e), e.name) .. NameMarks(e))
     if e.isGroup then
         row.groupIcon:SetTexture("Interface\\LFGFrame\\LFGRole") -- the row may have shown a chat ad before
         local gc = RBP.LFGROLE_COORDS.GROUP
@@ -1173,7 +1213,7 @@ end
 -- offered, the raid(s) named, the channel and the message.
 function UI:SetChatRow(row, e)
     local cells, ad, dim = row.cells, e.ad, e.isSelf
-    cells.name:SetText(Col(NameColor(e), e.name))
+    cells.name:SetText(Col(NameColor(e), e.name) .. NameMarks(e))
     row.groupIcon:SetTexture(RBP.CHAT_ICON)
     row.groupIcon:SetTexCoord(0, 1, 0, 1)
     row.groupIcon:Show()
@@ -1219,6 +1259,8 @@ function UI:ShowChatTooltip(owner, e)
     GameTooltip:AddLine(table.concat(e.raidLabels, ", "), 0.7, 0.7, 0.7)
     GameTooltip:AddLine((e.isGroup and "Needs: " or "Plays: ") .. AdRolesText(ad), 1, 1, 1)
     if ad.gs then GameTooltip:AddLine("GearScore " .. GSText(ad.gs) .. (e.isGroup and "+" or ""), 1, 1, 1) end
+    local contact = RBP:Contact(e.name)
+    if contact then GameTooltip:AddLine(ContactText(contact, function(s) return Ago(s) .. " ago" end), 0.6, 0.8, 1) end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(e.comment, 1, 1, 1, true)
     GameTooltip:Show()
@@ -1260,8 +1302,10 @@ function UI:ShowEntryTooltip(owner, e)
             end
         end
     end
+    local contact = RBP:Contact(e.name)
+    if contact or IsNew(e) then GameTooltip:AddLine(" ") end
+    if contact then GameTooltip:AddLine(ContactText(contact, function(s) return Ago(s) .. " ago" end), 0.6, 0.8, 1) end
     if IsNew(e) then
-        GameTooltip:AddLine(" ")
         GameTooltip:AddLine(format("First seen %s ago", Ago(GetTime() - e.firstSeen)), 0.25, 1, 0.45)
     end
     GameTooltip:Show()
@@ -1428,15 +1472,19 @@ function UI:DetailBlocks(e)
     local function text(t) if not skip then B[#B + 1] = { kind = "text", text = t } end end
     local now = floor(GetTime())
 
+    local contact = RBP:Contact(e.name)
     if e.isChat then
         local ad = e.ad
         row("Raid", table.concat(e.raidLabels, ", "))
+        local saved = LockoutText(e.raidIds)
+        if saved then row("Your lockout", saved) end
         row(e.isGroup and "Needs" or "Plays", AdRolesText(ad))
         if ad.gs then row(e.isGroup and "GearScore asked" or "GearScore", GSText(ad.gs) .. (e.isGroup and "+" or "")) end
         if ad.fill then row("Members", ad.fill) end
         if ad.progress then row("Progress", Col(C.warn, ad.progress)) end
         local notes = AdNotes(ad, e.isGroup)
         if #notes > 0 then row("Notes", table.concat(notes, ", ")) end
+        if contact then row("Whispers", ContactText(contact, AgoMinutes)) end
         row("Seen", format("%s in %s", AgoMinutes(now - floor(e.seen)), e.area or "chat"))
         if e.posts > 1 then row("Posted", format("%d times, first %s", e.posts, AgoMinutes(now - floor(e.firstSeen)))) end
         header("Ad", "comment")
@@ -1446,6 +1494,13 @@ function UI:DetailBlocks(e)
     end
 
     if not e.multi then row("Raid", RBP:RaidLabel(e.raidId)) end
+    local lockIds = { e.raidId }
+    if e.multi then
+        lockIds = {}
+        for _, p in ipairs(e.parts) do lockIds[#lockIds + 1] = p.raidId end
+    end
+    local saved = LockoutText(lockIds)
+    if saved then row("Your lockout", saved) end
     if e.isGroup then
         row("Members", format("%d/%d", e.size or 1, e.maxPlayers or 0))
         row("Composition", CompText(e.comp, true))
@@ -1459,6 +1514,7 @@ function UI:DetailBlocks(e)
         if e.ilvl then row("Item level", Col(RBP.ItemLevelColor(e.ilvl), FmtIlvl(e.ilvl))) end
     end
     if not e.isGroup and e.area and e.area ~= "" then row(ZONE or "Zone", e.area) end
+    if contact then row("Whispers", ContactText(contact, AgoMinutes)) end
     if e.initial then
         row("First seen", Col(C.dim, "when you started browsing"))
     elseif e.firstSeen then
@@ -2123,7 +2179,7 @@ function UI:InitRaidMenu(level)
         if not h then return end
         for _, id in ipairs(h.raids) do
             local info = UIDropDownMenu_CreateInfo()
-            info.text = RBP:RaidLabel(id) .. count(id)
+            info.text = RBP:RaidLabel(id) .. (RBP:LockoutFor(id) and ("  " .. Col(C.warn, "saved")) or "") .. count(id)
             info.value = id
             info.checked = RBP.mode == "single" and RBP.currentRaid == id
             info.func = function() CloseDropDownMenus(); RBP:SetMode("single", id) end
